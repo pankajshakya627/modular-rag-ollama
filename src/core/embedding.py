@@ -53,6 +53,10 @@ class EmbeddingWrapper:
         """Embed documents (batch operation)."""
         return self.embed_batch(texts)
     
+    def embed_texts(self, texts: List[str]) -> List[List[float]]:
+        """Embed texts (alias for embed_documents)."""
+        return self.embed_batch(texts)
+    
     def get_embedding_dimensions(self) -> int:
         """Get the embedding dimensions."""
         # Generate a test embedding to get dimensions

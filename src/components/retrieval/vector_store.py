@@ -7,7 +7,8 @@ import logging
 import uuid
 
 import numpy as np
-from langchain_community.vectorstores import Chroma, FAISS
+from langchain_chroma import Chroma
+from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document as LangChainDocument
 from langchain_ollama import OllamaEmbeddings
 
