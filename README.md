@@ -70,7 +70,6 @@ Most RAG implementations use a simple pattern that **fails in production**:
 
 ## 🔄 Query Processing Flow
 
-
 ### Step-by-Step Flow
 
 ```mermaid
@@ -262,22 +261,26 @@ Base URL: `http://localhost:8000`
 
 ### Overview
 
-| Method   | Endpoint     | Description               |
-| -------- | ------------ | ------------------------- |
-| `GET`    | `/health`    | System health check       |
-| `POST`   | `/query`     | RAG query processing      |
-| `POST`   | `/index`     | Index documents           |
-| `GET`    | `/search`    | Vector similarity search  |
-| `GET`    | `/documents` | List indexed documents    |
-| `GET`    | `/stats`     | System statistics         |
-| `DELETE` | `/documents` | Delete specific documents |
-| `DELETE` | `/index`     | Clear entire index        |
+| Method   | Endpoint     | Description               | Working Logic                                                           |
+| -------- | ------------ | ------------------------- | ----------------------------------------------------------------------- |
+| `GET`    | `/health`    | System health check       | Checks LLM, Embedding, Vector Store connectivity                        |
+| `POST`   | `/query`     | RAG query processing      | Runs LangGraph workflow (Analyze → Retrieve → Rerank → Generate)        |
+| `POST`   | `/index`     | Index documents           | Splits file into chunks, embeds them, stores in ChromaDB with UUID v7   |
+| `GET`    | `/search`    | Vector similarity search  | Performs hybrid search (Sparse+Dense) or direct dense search on vectors |
+| `GET`    | `/documents` | List indexed documents    | Aggregates chunks by `document_id` metadata                             |
+| `GET`    | `/stats`     | System statistics         | Counts total documents and chunks in store                              |
+| `DELETE` | `/documents` | Delete specific documents | Removes all chunks with matching `document_id`                          |
+| `DELETE` | `/index`     | Clear entire index        | Drops and recreates the ChromaDB collection                             |
 
 ---
 
 ### `GET /health` — System Health Check
 
-Check if LLM, embeddings, and vector store are available.
+**Working:**
+
+- Pings the Ollama server to verify LLM and Embedding models are loaded.
+- Checks if ChromaDB persistence directory exists and is accessible.
+- Returns status of all sub-systems.
 
 ```bash
 curl http://localhost:8000/health
@@ -302,7 +305,13 @@ curl http://localhost:8000/health
 
 ### `POST /query` — RAG Query Processing
 
-Process a query through the full LangGraph RAG pipeline (retrieval → fusion → rerank → generate).
+**Working:**
+
+1. **Query Analysis:** Decomposes complex queries into sub-queries (if enabled).
+2. **Retrieval:** Executes Hybrid Search (BM25 + Dense) and HyDE (Hypothetical Document Embeddings) in parallel.
+3. **Fusion:** Combines results using Reciprocal Rank Fusion (RRF).
+4. **Reranking:** Re-scores top results using a Cross-Encoder for high precision.
+5. **Generation:** Synthesizes answer using the top-k context via ChatOllama.
 
 ```bash
 curl -X POST http://localhost:8000/query \
@@ -315,8 +324,8 @@ curl -X POST http://localhost:8000/query \
 ```json
 {
   "query": "What is Modular RAG?",
-  "use_hyde": true, // optional, default true
-  "use_decomposition": true // optional, default true
+  "use_hyde": true, // Enable/disable HyDE
+  "use_decomposition": true // Enable/disable query decomposition
 }
 ```
 
@@ -325,7 +334,7 @@ curl -X POST http://localhost:8000/query \
 ```json
 {
   "query": "What is Modular RAG?",
-  "answer": "Modular RAG is a production-ready RAG system that combines...",
+  "answer": "Modular RAG is a production-ready RAG system...",
   "confidence": 0.87,
   "sources": [
     { "document_id": "doc_001", "chunk_id": 3, "score": 0.92 },
@@ -342,7 +351,13 @@ curl -X POST http://localhost:8000/query \
 
 ### `POST /index` — Index Documents
 
-Index a file or directory into ChromaDB using LangChain embeddings.
+**Working:**
+
+1. **Ingestion:** Reads file (PDF, DOCX, TXT) or recursively traverses directory.
+2. **Chunking:** Splits text using Recursive or Semantic chunking strategies.
+3. **ID Generation:** Assigns **UUID v7** (time-sortable) to documents and chunks.
+4. **Embedding:** Generates vector embeddings for each chunk via Ollama.
+5. **Storage:** Inserts chunks, embeddings, and metadata into ChromaDB.
 
 ```bash
 # Index a single file
@@ -354,17 +369,6 @@ curl -X POST http://localhost:8000/index \
 curl -X POST http://localhost:8000/index \
   -H "Content-Type: application/json" \
   -d '{"file_path": "/path/to/docs/", "recursive": true}'
-```
-
-**Request Body:**
-
-```json
-{
-  "file_path": "/path/to/document.pdf",
-  "recursive": false, // optional, for directories
-  "chunk_size": 1024, // optional
-  "chunk_overlap": 200 // optional
-}
 ```
 
 **Response:**
@@ -382,7 +386,11 @@ curl -X POST http://localhost:8000/index \
 
 ### `GET /search` — Vector Similarity Search
 
-Direct vector store search without RAG processing.
+**Working:**
+
+- Performs a direct similarity search on the vector store.
+- Supports pure Dense Retrieval by default.
+- Useful for debugging retrieval quality without the RAG generation step.
 
 ```bash
 curl "http://localhost:8000/search?query=machine%20learning&top_k=5"
@@ -415,7 +423,11 @@ curl "http://localhost:8000/search?query=machine%20learning&top_k=5"
 
 ### `GET /documents` — List Indexed Documents
 
-List all documents currently in the vector store.
+**Working:**
+
+- Scans all chunks in ChromaDB.
+- Aggregates chunks based on `metadata.document_id`.
+- Reconstructs a summary of stored documents (path, type, chunk count).
 
 ```bash
 curl http://localhost:8000/documents
@@ -439,7 +451,11 @@ curl http://localhost:8000/documents
 
 ### `GET /stats` — System Statistics
 
-Get document and chunk counts.
+**Working:**
+
+- Returns the total count of unique Documents.
+- Returns the total number of Chunks (vector entries).
+- Estimates index size.
 
 ```bash
 curl http://localhost:8000/stats
@@ -459,7 +475,12 @@ curl http://localhost:8000/stats
 
 ### `DELETE /documents` — Delete Specific Documents
 
-Delete documents by IDs.
+**Working:**
+
+1. Accepts a list of `document_ids`.
+2. Queries ChromaDB for all chunks where `metadata.document_id` matches the input IDs.
+3. Deletes the matching chunks from the collection.
+4. **Note:** Does not delete the original source file from disk.
 
 ```bash
 curl -X DELETE http://localhost:8000/documents \
@@ -480,7 +501,12 @@ curl -X DELETE http://localhost:8000/documents \
 
 ### `DELETE /index` — Clear Entire Index
 
-Delete all documents and reset the vector store.
+**Working:**
+
+1. Connects to the ChromaDB client.
+2. **Drops** the `modular_rag_documents` collection entirely.
+3. Re-creates a fresh, empty collection with the same settings.
+4. **Warning:** This is destructive and irreversible.
 
 ```bash
 curl -X DELETE http://localhost:8000/index
