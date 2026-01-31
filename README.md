@@ -60,19 +60,20 @@ A modular, production-ready Retrieval-Augmented Generation (RAG) system built wi
 
 ## Quick Start
 
-### Installation
-
-```bash
 # Clone the repository
-git clone <repository-url>
-cd RAG_ollama
+
+git clone https://github.com/pankajshakya627/modular-rag-ollama.git
+cd modular-rag-ollama
 
 # Install dependencies
+
 pip install -r requirements.txt
 
 # Install the package
+
 pip install -e .
-```
+
+````
 
 ### Configuration
 
@@ -86,7 +87,7 @@ llm:
 embedding:
   model: "nomic-embed-text-v2-moe"
   base_url: "http://localhost:11434"
-```
+````
 
 ### Start Ollama
 
