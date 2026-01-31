@@ -1,0 +1,261 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 900">
+  <style>
+    .label { font-family: 'SF Mono', 'Fira Code', monospace; fill: #e2e8f0; }
+    .title { font-size: 16px; font-weight: 600; }
+    .node-text { font-size: 11px; }
+    .detail { font-size: 9px; fill: #94a3b8; }
+    .stage-num { font-size: 20px; font-weight: bold; fill: #0ea5e9; }
+    
+    /* Nodes */
+    .node { rx: 8; stroke-width: 2; }
+    .n-start { fill: #1e40af; stroke: #3b82f6; }
+    .n-analysis { fill: #4c1d95; stroke: #8b5cf6; }
+    .n-retrieval { fill: #065f46; stroke: #10b981; }
+    .n-fusion { fill: #164e63; stroke: #22d3ee; }
+    .n-rerank { fill: #7c2d12; stroke: #f97316; }
+    .n-generate { fill: #166534; stroke: #22c55e; }
+    .n-response { fill: #1e40af; stroke: #3b82f6; }
+    
+    /* Flow lines with animated dash */
+    .flow-line { 
+      stroke: #0ea5e9; 
+      stroke-width: 3; 
+      fill: none;
+      stroke-linecap: round;
+    }
+    
+    /* Main data packet traveling down */
+    .main-packet {
+      fill: #22d3ee;
+      filter: drop-shadow(0 0 10px #22d3ee);
+    }
+    
+    /* Sequential journey animation - packet travels through entire flow */
+    @keyframes journeyDown {
+      0%   { cy: 60;  opacity: 0; }
+      2%   { cy: 60;  opacity: 1; }
+      8%   { cy: 140; opacity: 1; }  /* Reach Query Analysis */
+      12%  { cy: 140; opacity: 1; }  /* Stay at Query Analysis */
+      18%  { cy: 250; opacity: 1; }  /* Reach Decision */
+      
+      /* Split into 3 paths */
+      22%  { cy: 330; opacity: 1; }  /* Reach Retrieval */
+      32%  { cy: 330; opacity: 1; }  /* Stay at Retrieval */
+      
+      38%  { cy: 500; opacity: 1; }  /* Reach Fusion */
+      44%  { cy: 500; opacity: 1; }  /* Stay at Fusion */
+      
+      50%  { cy: 590; opacity: 1; }  /* Reach Rerank */
+      58%  { cy: 590; opacity: 1; }  /* Stay at Rerank */
+      
+      66%  { cy: 700; opacity: 1; }  /* Reach Generate */
+      76%  { cy: 700; opacity: 1; }  /* Stay at Generate */
+      
+      86%  { cy: 810; opacity: 1; }  /* Reach Response */
+      95%  { cy: 810; opacity: 0.5; }
+      100% { cy: 850; opacity: 0; }
+    }
+    
+    .main-packet {
+      animation: journeyDown 8s ease-in-out infinite;
+    }
+    
+    /* Parallel retrieval packets */
+    @keyframes retrieveLeft {
+      0%, 18%  { opacity: 0; cx: 400; cy: 250; }
+      22%      { opacity: 1; cx: 250; cy: 330; }
+      32%      { opacity: 1; cx: 150; cy: 360; }
+      36%      { opacity: 1; cx: 150; cy: 430; }
+      40%      { opacity: 0; cx: 250; cy: 500; }
+      100%     { opacity: 0; }
+    }
+    
+    @keyframes retrieveMiddle {
+      0%, 18%  { opacity: 0; cy: 250; }
+      22%      { opacity: 1; cy: 330; }
+      32%      { opacity: 1; cy: 360; }
+      36%      { opacity: 1; cy: 430; }
+      40%      { opacity: 0; cy: 500; }
+      100%     { opacity: 0; }
+    }
+    
+    @keyframes retrieveRight {
+      0%, 18%  { opacity: 0; cx: 400; cy: 250; }
+      22%      { opacity: 1; cx: 550; cy: 330; }
+      32%      { opacity: 1; cx: 650; cy: 360; }
+      36%      { opacity: 1; cx: 650; cy: 430; }
+      40%      { opacity: 0; cx: 550; cy: 500; }
+      100%     { opacity: 0; }
+    }
+    
+    .retrieve-packet-l {
+      fill: #34d399;
+      filter: drop-shadow(0 0 6px #10b981);
+      animation: retrieveLeft 8s ease-in-out infinite;
+    }
+    
+    .retrieve-packet-m {
+      fill: #34d399;
+      filter: drop-shadow(0 0 6px #10b981);
+      cx: 400;
+      animation: retrieveMiddle 8s ease-in-out infinite;
+    }
+    
+    .retrieve-packet-r {
+      fill: #34d399;
+      filter: drop-shadow(0 0 6px #10b981);
+      animation: retrieveRight 8s ease-in-out infinite;
+    }
+    
+    /* Node glow when packet arrives */
+    @keyframes nodeGlow {
+      0%, 100% { filter: none; }
+      8%, 12%  { filter: drop-shadow(0 0 10px #8b5cf6); }
+      22%, 32% { filter: drop-shadow(0 0 10px #10b981); }
+      38%, 44% { filter: drop-shadow(0 0 10px #22d3ee); }
+      50%, 58% { filter: drop-shadow(0 0 10px #f97316); }
+      66%, 76% { filter: drop-shadow(0 0 10px #22c55e); }
+    }
+    
+    /* Parallel box highlight */
+    @keyframes parallelHighlight {
+      0%, 18%, 42%, 100% { stroke-opacity: 0.3; }
+      22%, 38% { stroke-opacity: 1; }
+    }
+    
+    .parallel-box {
+      animation: parallelHighlight 8s ease-in-out infinite;
+    }
+    
+    /* Arrow markers */
+    .arrow { fill: #0ea5e9; }
+  </style>
+  
+  <defs>
+    <marker id="arr" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L6,3 z" fill="#0ea5e9"/>
+    </marker>
+  </defs>
+  
+  <!-- Background -->
+  <rect width="800" height="900" fill="#0f172a"/>
+  
+  <!-- Title -->
+  <text x="400" y="35" text-anchor="middle" class="label title">QUERY PROCESSING FLOW</text>
+  
+  <!-- Stage 1: User Query -->
+  <text x="50" y="90" class="stage-num">①</text>
+  <rect x="250" y="60" width="300" height="50" class="node n-start"/>
+  <text x="400" y="92" text-anchor="middle" class="label node-text">USER QUERY</text>
+  
+  <!-- Flow 1→2 -->
+  <line x1="400" y1="110" x2="400" y2="138" class="flow-line" marker-end="url(#arr)"/>
+  
+  <!-- Stage 2: Query Analysis -->
+  <text x="50" y="175" class="stage-num">②</text>
+  <rect x="200" y="140" width="400" height="70" class="node n-analysis"/>
+  <text x="400" y="170" text-anchor="middle" class="label node-text">QUERY ANALYSIS</text>
+  <text x="400" y="192" text-anchor="middle" class="label detail">Decomposition | Step-back | Intent Detection</text>
+  
+  <!-- Flow 2→Decision -->
+  <line x1="400" y1="210" x2="400" y2="238" class="flow-line" marker-end="url(#arr)"/>
+  
+  <!-- Decision diamond -->
+  <polygon points="400,240 440,270 400,300 360,270" fill="#581c87" stroke="#a855f7" stroke-width="2"/>
+  <text x="400" y="276" text-anchor="middle" class="label" style="font-size: 14px;">?</text>
+  
+  <!-- Parallel box -->
+  <rect x="70" y="320" width="660" height="160" rx="12" fill="none" stroke="#22d3ee" stroke-width="2" stroke-dasharray="10 5" class="parallel-box"/>
+  <text x="100" y="345" class="label detail" style="fill: #22d3ee;">⚡ PARALLEL EXECUTION</text>
+  
+  <!-- Branch lines to 3 retrievers -->
+  <path d="M360,270 L150,360" class="flow-line" marker-end="url(#arr)"/>
+  <path d="M400,300 L400,360" class="flow-line" marker-end="url(#arr)"/>
+  <path d="M440,270 L650,360" class="flow-line" marker-end="url(#arr)"/>
+  
+  <!-- Stage 3: Retrieval (3 parallel) -->
+  <text x="50" y="400" class="stage-num">③</text>
+  
+  <!-- Dense -->
+  <rect x="70" y="360" width="160" height="90" class="node n-retrieval"/>
+  <text x="150" y="390" text-anchor="middle" class="label node-text">DENSE</text>
+  <text x="150" y="408" text-anchor="middle" class="label detail">Vector Search</text>
+  <text x="150" y="425" text-anchor="middle" class="label detail">ChromaDB</text>
+  <text x="150" y="440" text-anchor="middle" class="label detail">cosine similarity</text>
+  
+  <!-- Sparse -->
+  <rect x="320" y="360" width="160" height="90" class="node n-retrieval"/>
+  <text x="400" y="390" text-anchor="middle" class="label node-text">SPARSE</text>
+  <text x="400" y="408" text-anchor="middle" class="label detail">BM25 Search</text>
+  <text x="400" y="425" text-anchor="middle" class="label detail">rank_bm25</text>
+  <text x="400" y="440" text-anchor="middle" class="label detail">term frequency</text>
+  
+  <!-- HyDE -->
+  <rect x="570" y="360" width="160" height="90" class="node n-retrieval"/>
+  <text x="650" y="390" text-anchor="middle" class="label node-text">HyDE</text>
+  <text x="650" y="408" text-anchor="middle" class="label detail">Hypothetical Doc</text>
+  <text x="650" y="425" text-anchor="middle" class="label detail">LLM → Embed</text>
+  <text x="650" y="440" text-anchor="middle" class="label detail">→ Vector Search</text>
+  
+  <!-- Merge lines -->
+  <path d="M150,450 L400,490" class="flow-line"/>
+  <path d="M400,450 L400,490" class="flow-line"/>
+  <path d="M650,450 L400,490" class="flow-line" marker-end="url(#arr)"/>
+  
+  <!-- Stage 4: Fusion -->
+  <text x="50" y="530" class="stage-num">④</text>
+  <rect x="200" y="490" width="400" height="60" class="node n-fusion"/>
+  <text x="400" y="520" text-anchor="middle" class="label node-text" style="fill: #fff;">HYBRID FUSION</text>
+  <text x="400" y="538" text-anchor="middle" class="label detail">Reciprocal Rank Fusion (RRF) | Score Normalization</text>
+  
+  <!-- Flow 4→5 -->
+  <line x1="400" y1="550" x2="400" y2="578" class="flow-line" marker-end="url(#arr)"/>
+  
+  <!-- Stage 5: Reranking -->
+  <text x="50" y="620" class="stage-num">⑤</text>
+  <rect x="200" y="580" width="400" height="60" class="node n-rerank"/>
+  <text x="400" y="608" text-anchor="middle" class="label node-text">RERANKING</text>
+  <text x="400" y="628" text-anchor="middle" class="label detail">CrossEncoder (ms-marco-MiniLM) | ColBERT (MaxSim)</text>
+  
+  <!-- Flow 5→6 -->
+  <line x1="400" y1="640" x2="400" y2="668" class="flow-line" marker-end="url(#arr)"/>
+  
+  <!-- Stage 6: Generation -->
+  <text x="50" y="710" class="stage-num">⑥</text>
+  <rect x="200" y="670" width="400" height="60" class="node n-generate"/>
+  <text x="400" y="698" text-anchor="middle" class="label node-text" style="fill: #fff;">ANSWER GENERATION</text>
+  <text x="400" y="718" text-anchor="middle" class="label detail">ChatOllama | System Prompt + Context + Query</text>
+  
+  <!-- Flow 6→7 -->
+  <line x1="400" y1="730" x2="400" y2="758" class="flow-line" marker-end="url(#arr)"/>
+  
+  <!-- Stage 7: Response -->
+  <text x="50" y="800" class="stage-num">⑦</text>
+  <rect x="200" y="760" width="400" height="60" class="node n-response"/>
+  <text x="400" y="785" text-anchor="middle" class="label node-text">RESPONSE</text>
+  <text x="400" y="805" text-anchor="middle" class="label detail">Answer + Sources + Confidence Score</text>
+  
+  <!-- Animated main packet -->
+  <circle cx="400" r="8" class="main-packet"/>
+  
+  <!-- Retrieval split packets -->
+  <circle r="5" class="retrieve-packet-l"/>
+  <circle r="5" class="retrieve-packet-m"/>
+  <circle r="5" class="retrieve-packet-r"/>
+  
+  <!-- Legend -->
+  <rect x="640" y="55" width="140" height="100" rx="8" fill="#1e293b" stroke="#334155"/>
+  <text x="710" y="75" text-anchor="middle" class="label" style="font-size: 10px;">LEGEND</text>
+  
+  <circle cx="660" cy="95" r="5" class="main-packet" style="animation: none;"/>
+  <text x="680" y="99" class="label detail">Main Packet</text>
+  
+  <circle cx="660" cy="115" r="4" fill="#34d399"/>
+  <text x="680" y="119" class="label detail">Parallel Packets</text>
+  
+  <line x1="655" y1="135" x2="675" y2="135" class="flow-line"/>
+  <text x="680" y="139" class="label detail">Data Flow</text>
+  
+  <!-- Version -->
+  <text x="750" y="880" text-anchor="end" class="label detail">v1.0</text>
+</svg>

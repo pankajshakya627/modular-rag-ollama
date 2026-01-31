@@ -1,0 +1,297 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 750">
+  <style>
+    /* Typography */
+    .label { font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace; fill: #e2e8f0; }
+    .title { font-size: 16px; font-weight: 600; }
+    .layer-label { font-size: 12px; font-weight: 600; letter-spacing: 1px; }
+    .node-label { font-size: 10px; }
+    .tech-label { font-size: 9px; fill: #64748b; }
+    
+    /* Layer backgrounds */
+    .layer-bg { rx: 12; fill-opacity: 0.15; stroke-width: 1.5; }
+    .layer-presentation { fill: #3b82f6; stroke: #3b82f6; }
+    .layer-orchestration { fill: #8b5cf6; stroke: #8b5cf6; }
+    .layer-components { fill: #10b981; stroke: #10b981; }
+    .layer-core { fill: #f59e0b; stroke: #f59e0b; }
+    .layer-infra { fill: #ef4444; stroke: #ef4444; }
+    
+    /* Nodes */
+    .node { rx: 6; stroke-width: 1.5; }
+    .node-api { fill: #1e3a5f; stroke: #60a5fa; }
+    .node-graph { fill: #3b0764; stroke: #a78bfa; }
+    .node-retrieval { fill: #064e3b; stroke: #34d399; }
+    .node-rerank { fill: #431407; stroke: #fb923c; }
+    .node-gen { fill: #14532d; stroke: #4ade80; }
+    .node-core { fill: #451a03; stroke: #fbbf24; }
+    .node-infra { fill: #450a0a; stroke: #f87171; }
+    
+    /* Main flow line */
+    .flow-line {
+      fill: none;
+      stroke: #0ea5e9;
+      stroke-width: 3;
+      stroke-linecap: round;
+    }
+    
+    /* Animated particles flowing down through layers */
+    .data-packet {
+      fill: #22d3ee;
+      filter: drop-shadow(0 0 8px #22d3ee);
+    }
+    
+    /* Animation for particles flowing layer to layer */
+    @keyframes flowLayer1 {
+      0% { cy: 95; opacity: 0; }
+      10% { opacity: 1; }
+      100% { cy: 175; opacity: 1; }
+    }
+    
+    @keyframes flowLayer2 {
+      0% { cy: 215; opacity: 0; }
+      10% { opacity: 1; }
+      100% { cy: 315; opacity: 1; }
+    }
+    
+    @keyframes flowLayer3 {
+      0% { cy: 355; opacity: 0; }
+      10% { opacity: 1; }
+      100% { cy: 470; opacity: 1; }
+    }
+    
+    @keyframes flowLayer4 {
+      0% { cy: 510; opacity: 0; }
+      10% { opacity: 1; }
+      100% { cy: 590; opacity: 1; }
+    }
+    
+    @keyframes flowLayer5 {
+      0% { cy: 630; opacity: 0; }
+      10% { opacity: 1; }
+      100% { cy: 700; opacity: 1; }
+    }
+    
+    .packet-1 { animation: flowLayer1 1.2s ease-in-out infinite; }
+    .packet-2 { animation: flowLayer2 1.2s ease-in-out infinite 1.2s; }
+    .packet-3 { animation: flowLayer3 1.2s ease-in-out infinite 2.4s; }
+    .packet-4 { animation: flowLayer4 1.2s ease-in-out infinite 3.6s; }
+    .packet-5 { animation: flowLayer5 1.2s ease-in-out infinite 4.8s; }
+    
+    /* Pipeline flow animation inside orchestration */
+    @keyframes pipelineFlow {
+      0% { cx: 150; }
+      100% { cx: 850; }
+    }
+    
+    .pipeline-packet {
+      fill: #c084fc;
+      filter: drop-shadow(0 0 6px #a855f7);
+      animation: pipelineFlow 3s linear infinite;
+    }
+    
+    /* Pulse effect on active layer */
+    @keyframes layerPulse {
+      0%, 100% { stroke-opacity: 0.5; }
+      50% { stroke-opacity: 1; }
+    }
+    
+    .layer-active {
+      animation: layerPulse 2s ease-in-out infinite;
+    }
+    
+    /* Connector arrows */
+    .arrow { fill: #0ea5e9; }
+    
+    /* Stage indicators */
+    .stage-num {
+      font-size: 11px;
+      fill: #0ea5e9;
+      font-weight: bold;
+    }
+  </style>
+  
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L6,3 z" class="arrow"/>
+    </marker>
+    
+    <linearGradient id="flowGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#22d3ee;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#0ea5e9;stop-opacity:0.3" />
+    </linearGradient>
+  </defs>
+  
+  <!-- Background -->
+  <rect width="1000" height="750" fill="#0f172a"/>
+  
+  <!-- Title -->
+  <text x="500" y="35" text-anchor="middle" class="label title">MODULAR RAG SYSTEM — LAYER ARCHITECTURE</text>
+  
+  <!-- Stage numbers on the left -->
+  <text x="30" y="120" class="label stage-num">①</text>
+  <text x="30" y="265" class="label stage-num">②</text>
+  <text x="30" y="415" class="label stage-num">③</text>
+  <text x="30" y="555" class="label stage-num">④</text>
+  <text x="30" y="670" class="label stage-num">⑤</text>
+  
+  <!-- LAYER 1: PRESENTATION -->
+  <g id="layer-presentation">
+    <rect x="50" y="60" width="900" height="100" class="layer-bg layer-presentation layer-active"/>
+    <text x="80" y="85" class="label layer-label" style="fill: #60a5fa;">PRESENTATION LAYER</text>
+    
+    <rect x="100" y="100" width="130" height="45" class="node node-api"/>
+    <text x="165" y="128" text-anchor="middle" class="label node-label">POST /query</text>
+    
+    <rect x="250" y="100" width="130" height="45" class="node node-api"/>
+    <text x="315" y="128" text-anchor="middle" class="label node-label">POST /documents</text>
+    
+    <rect x="400" y="100" width="120" height="45" class="node node-api"/>
+    <text x="460" y="128" text-anchor="middle" class="label node-label">GET /health</text>
+    
+    <rect x="540" y="100" width="140" height="45" class="node node-api"/>
+    <text x="610" y="128" text-anchor="middle" class="label node-label">WS /ws/query</text>
+    
+    <text x="780" y="128" class="label tech-label">FastAPI + Uvicorn</text>
+  </g>
+  
+  <!-- Flow connector 1→2 -->
+  <line x1="500" y1="160" x2="500" y2="180" class="flow-line" marker-end="url(#arrow)"/>
+  <circle cx="500" cy="95" r="6" class="data-packet packet-1"/>
+  
+  <!-- LAYER 2: ORCHESTRATION -->
+  <g id="layer-orchestration">
+    <rect x="50" y="180" width="900" height="120" class="layer-bg layer-orchestration"/>
+    <text x="80" y="205" class="label layer-label" style="fill: #a78bfa;">ORCHESTRATION LAYER</text>
+    
+    <!-- Pipeline stages -->
+    <rect x="100" y="225" width="100" height="50" class="node node-graph"/>
+    <text x="150" y="255" text-anchor="middle" class="label node-label">Query</text>
+    <text x="150" y="268" text-anchor="middle" class="label tech-label">Analysis</text>
+    
+    <path d="M205,250 L230,250" class="flow-line" marker-end="url(#arrow)"/>
+    
+    <rect x="235" y="225" width="100" height="50" class="node node-graph"/>
+    <text x="285" y="255" text-anchor="middle" class="label node-label">Retrieve</text>
+    <text x="285" y="268" text-anchor="middle" class="label tech-label">×3 methods</text>
+    
+    <path d="M340,250 L365,250" class="flow-line" marker-end="url(#arrow)"/>
+    
+    <rect x="370" y="225" width="90" height="50" class="node node-graph"/>
+    <text x="415" y="255" text-anchor="middle" class="label node-label">Fuse</text>
+    <text x="415" y="268" text-anchor="middle" class="label tech-label">RRF</text>
+    
+    <path d="M465,250 L490,250" class="flow-line" marker-end="url(#arrow)"/>
+    
+    <rect x="495" y="225" width="90" height="50" class="node node-graph"/>
+    <text x="540" y="255" text-anchor="middle" class="label node-label">Rerank</text>
+    <text x="540" y="268" text-anchor="middle" class="label tech-label">Top-K</text>
+    
+    <path d="M590,250 L615,250" class="flow-line" marker-end="url(#arrow)"/>
+    
+    <rect x="620" y="225" width="100" height="50" class="node node-graph"/>
+    <text x="670" y="255" text-anchor="middle" class="label node-label">Generate</text>
+    <text x="670" y="268" text-anchor="middle" class="label tech-label">Answer</text>
+    
+    <!-- Animated pipeline particle -->
+    <circle cy="250" r="5" class="pipeline-packet"/>
+    
+    <text x="820" y="255" class="label tech-label">LangGraph StateGraph</text>
+  </g>
+  
+  <!-- Flow connector 2→3 -->
+  <line x1="500" y1="300" x2="500" y2="320" class="flow-line" marker-end="url(#arrow)"/>
+  <circle cx="500" cy="215" r="6" class="data-packet packet-2"/>
+  
+  <!-- LAYER 3: COMPONENTS -->
+  <g id="layer-components">
+    <rect x="50" y="320" width="900" height="140" class="layer-bg layer-components"/>
+    <text x="80" y="348" class="label layer-label" style="fill: #34d399;">COMPONENT LAYER</text>
+    
+    <!-- Retrieval block -->
+    <rect x="80" y="365" width="250" height="80" rx="8" fill="#052e16" stroke="#22c55e" stroke-width="1"/>
+    <text x="205" y="385" text-anchor="middle" class="label node-label" style="fill: #22c55e;">RETRIEVAL</text>
+    <text x="100" y="405" class="label tech-label">• VectorStoreManager</text>
+    <text x="100" y="420" class="label tech-label">• HybridSearcher (BM25 + Dense)</text>
+    <text x="100" y="435" class="label tech-label">• HyDE | RAPTOR</text>
+    
+    <!-- Reranking block -->
+    <rect x="360" y="365" width="200" height="80" rx="8" fill="#431407" stroke="#f97316" stroke-width="1"/>
+    <text x="460" y="385" text-anchor="middle" class="label node-label" style="fill: #fb923c;">RERANKING</text>
+    <text x="380" y="410" class="label tech-label">• CrossEncoderReranker</text>
+    <text x="380" y="428" class="label tech-label">• ColBERTReranker</text>
+    
+    <!-- Generation block -->
+    <rect x="590" y="365" width="200" height="80" rx="8" fill="#14532d" stroke="#4ade80" stroke-width="1"/>
+    <text x="690" y="385" text-anchor="middle" class="label node-label" style="fill: #4ade80;">GENERATION</text>
+    <text x="610" y="410" class="label tech-label">• AnswerGenerator</text>
+    <text x="610" y="428" class="label tech-label">• ResponseSynthesizer</text>
+    
+    <!-- Utils block -->
+    <rect x="820" y="365" width="110" height="80" rx="8" fill="#1e1b4b" stroke="#818cf8" stroke-width="1"/>
+    <text x="875" y="385" text-anchor="middle" class="label node-label" style="fill: #a5b4fc;">UTILS</text>
+    <text x="835" y="410" class="label tech-label">• Evaluation</text>
+    <text x="835" y="428" class="label tech-label">• Logging</text>
+  </g>
+  
+  <!-- Flow connector 3→4 -->
+  <line x1="500" y1="460" x2="500" y2="480" class="flow-line" marker-end="url(#arrow)"/>
+  <circle cx="500" cy="355" r="6" class="data-packet packet-3"/>
+  
+  <!-- LAYER 4: CORE -->
+  <g id="layer-core">
+    <rect x="50" y="480" width="900" height="100" class="layer-bg layer-core"/>
+    <text x="80" y="508" class="label layer-label" style="fill: #fbbf24;">CORE LAYER</text>
+    
+    <rect x="120" y="520" width="180" height="45" class="node node-core"/>
+    <text x="210" y="548" text-anchor="middle" class="label node-label">LLMWrapper</text>
+    
+    <rect x="330" y="520" width="200" height="45" class="node node-core"/>
+    <text x="430" y="548" text-anchor="middle" class="label node-label">EmbeddingWrapper</text>
+    
+    <rect x="560" y="520" width="160" height="45" class="node node-core"/>
+    <text x="640" y="548" text-anchor="middle" class="label node-label">Configuration</text>
+    
+    <text x="800" y="548" class="label tech-label">langchain-ollama</text>
+  </g>
+  
+  <!-- Flow connector 4→5 -->
+  <line x1="500" y1="580" x2="500" y2="600" class="flow-line" marker-end="url(#arrow)"/>
+  <circle cx="500" cy="510" r="6" class="data-packet packet-4"/>
+  
+  <!-- LAYER 5: INFRASTRUCTURE -->
+  <g id="layer-infra">
+    <rect x="50" y="600" width="900" height="100" class="layer-bg layer-infra"/>
+    <text x="80" y="628" class="label layer-label" style="fill: #f87171;">INFRASTRUCTURE LAYER</text>
+    
+    <rect x="120" y="645" width="180" height="45" class="node node-infra"/>
+    <text x="210" y="673" text-anchor="middle" class="label node-label">Ollama Server</text>
+    
+    <rect x="330" y="645" width="180" height="45" class="node node-infra"/>
+    <text x="420" y="673" text-anchor="middle" class="label node-label">ChromaDB</text>
+    
+    <rect x="540" y="645" width="180" height="45" class="node node-infra"/>
+    <text x="630" y="673" text-anchor="middle" class="label node-label">File System</text>
+    
+    <text x="800" y="673" class="label tech-label">Local Infrastructure</text>
+  </g>
+  
+  <!-- Final packet -->
+  <circle cx="500" cy="630" r="6" class="data-packet packet-5"/>
+  
+  <!-- Legend -->
+  <g id="legend">
+    <rect x="780" y="55" width="160" height="90" rx="8" fill="#1e293b" stroke="#334155" stroke-width="1"/>
+    <text x="860" y="75" text-anchor="middle" class="label node-label">DATA FLOW</text>
+    
+    <circle cx="800" cy="95" r="5" class="data-packet"/>
+    <text x="820" y="99" class="label tech-label">Request/Response</text>
+    
+    <circle cx="800" r="4" class="pipeline-packet" style="animation: none; cx: 800; cy: 115"/>
+    <text x="820" y="119" class="label tech-label">Pipeline State</text>
+    
+    <line x1="795" y1="135" x2="815" y2="135" class="flow-line"/>
+    <text x="820" y="139" class="label tech-label">Connector</text>
+  </g>
+  
+  <!-- Version -->
+  <text x="950" y="740" text-anchor="end" class="label tech-label">modular-rag-ollama v1.0</text>
+</svg>

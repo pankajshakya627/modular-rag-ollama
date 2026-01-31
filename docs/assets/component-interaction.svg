@@ -1,0 +1,217 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 650">
+  <style>
+    .label { font-family: 'SF Mono', 'Fira Code', monospace; fill: #e2e8f0; }
+    .title { font-size: 14px; font-weight: 600; }
+    .mod-label { font-size: 11px; }
+    .sub-label { font-size: 9px; fill: #94a3b8; }
+    
+    /* Module boxes */
+    .mod { rx: 8; stroke-width: 2; }
+    .mod-api { fill: #0c4a6e; stroke: #38bdf8; }
+    .mod-orch { fill: #2e1065; stroke: #a855f7; }
+    .mod-retrieval { fill: #052e16; stroke: #22c55e; }
+    .mod-rerank { fill: #431407; stroke: #f97316; }
+    .mod-gen { fill: #14532d; stroke: #4ade80; }
+    .mod-core { fill: #451a03; stroke: #fbbf24; }
+    .mod-infra { fill: #450a0a; stroke: #f87171; }
+    
+    /* Connector lines */
+    .conn {
+      fill: none;
+      stroke: #475569;
+      stroke-width: 1.5;
+    }
+    
+    /* Data pulse animation along connectors */
+    @keyframes pulseFlow {
+      0% { stroke-dashoffset: 20; }
+      100% { stroke-dashoffset: 0; }
+    }
+    
+    .conn-active {
+      stroke: #22d3ee;
+      stroke-width: 2;
+      stroke-dasharray: 5 5;
+      animation: pulseFlow 0.8s linear infinite;
+    }
+    
+    /* Traveling packets */
+    .packet {
+      fill: #22d3ee;
+      filter: drop-shadow(0 0 6px #22d3ee);
+    }
+    
+    /* API to Orchestration */
+    @keyframes p1 {
+      0%   { cx: 450; cy: 80; opacity: 0; }
+      10%  { cx: 450; cy: 80; opacity: 1; }
+      100% { cx: 450; cy: 170; opacity: 1; }
+    }
+    .pkt-1 { animation: p1 2s linear infinite; }
+    
+    /* Orchestration to Retrieval (fan out) */
+    @keyframes p2a {
+      0%, 30%  { cx: 300; cy: 260; opacity: 0; }
+      40%      { cx: 300; cy: 260; opacity: 1; }
+      100%     { cx: 170; cy: 320; opacity: 1; }
+    }
+    @keyframes p2b {
+      0%, 30%  { cx: 450; cy: 260; opacity: 0; }
+      40%      { cx: 450; cy: 260; opacity: 1; }
+      100%     { cx: 330; cy: 320; opacity: 1; }
+    }
+    @keyframes p2c {
+      0%, 30%  { cx: 600; cy: 260; opacity: 0; }
+      40%      { cx: 600; cy: 260; opacity: 1; }
+      100%     { cx: 490; cy: 320; opacity: 1; }
+    }
+    .pkt-2a { animation: p2a 2s linear infinite 1s; }
+    .pkt-2b { animation: p2b 2s linear infinite 1s; }
+    .pkt-2c { animation: p2c 2s linear infinite 1s; }
+    
+    /* Retrieval to Reranking */
+    @keyframes p3 {
+      0%, 60%  { cx: 330; cy: 420; opacity: 0; }
+      70%      { cx: 330; cy: 420; opacity: 1; }
+      100%     { cx: 680; cy: 360; opacity: 1; }
+    }
+    .pkt-3 { animation: p3 2s linear infinite 1s; }
+    
+    /* Reranking to Generation */
+    @keyframes p4 {
+      0%, 75%  { cx: 730; cy: 420; opacity: 0; }
+      85%      { cx: 730; cy: 420; opacity: 1; }
+      100%     { cx: 730; cy: 480; opacity: 1; }
+    }
+    .pkt-4 { animation: p4 2s linear infinite 1s; }
+    
+    /* Generation to Core */
+    @keyframes p5 {
+      0%, 85%  { cx: 730; cy: 540; opacity: 0; }
+      90%      { cx: 730; cy: 540; opacity: 1; }
+      100%     { cx: 450; cy: 590; opacity: 1; }
+    }
+    .pkt-5 { animation: p5 2s linear infinite 1s; }
+    
+    /* Pulsing glow on active components */
+    @keyframes glowPulse {
+      0%, 100% { filter: none; }
+      50% { filter: drop-shadow(0 0 8px currentColor); }
+    }
+    
+    .glow-node {
+      animation: glowPulse 3s ease-in-out infinite;
+    }
+    
+    /* Arrow marker */
+    .arrow { fill: #0ea5e9; }
+  </style>
+  
+  <defs>
+    <marker id="arrowM" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L6,3 z" fill="#475569"/>
+    </marker>
+    <marker id="arrowA" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L6,3 z" fill="#22d3ee"/>
+    </marker>
+  </defs>
+  
+  <!-- Background -->
+  <rect width="900" height="650" fill="#0f172a"/>
+  
+  <!-- Title -->
+  <text x="450" y="30" text-anchor="middle" class="label title">COMPONENT INTERACTION — DATA FLOW</text>
+  
+  <!-- API Layer -->
+  <rect x="300" y="55" width="300" height="50" class="mod mod-api glow-node"/>
+  <text x="450" y="78" text-anchor="middle" class="label mod-label">FastAPI Application</text>
+  <text x="450" y="95" text-anchor="middle" class="label sub-label">/query | /documents | /ws/query</text>
+  
+  <!-- Connector API → Orch -->
+  <line x1="450" y1="105" x2="450" y2="165" class="conn" marker-end="url(#arrowM)"/>
+  <line x1="450" y1="105" x2="450" y2="165" class="conn-active" marker-end="url(#arrowA)"/>
+  
+  <!-- Orchestration Layer -->
+  <rect x="200" y="170" width="500" height="80" class="mod mod-orch glow-node"/>
+  <text x="450" y="200" text-anchor="middle" class="label mod-label">RAGGraph (LangGraph)</text>
+  <text x="450" y="220" text-anchor="middle" class="label sub-label">Query → Retrieve → Fuse → Rerank → Generate</text>
+  <text x="450" y="238" text-anchor="middle" class="label sub-label" style="fill: #a78bfa;">StateGraph + MemorySaver + LCEL Chains</text>
+  
+  <!-- Fan-out connectors -->
+  <path d="M300,250 L170,315" class="conn" marker-end="url(#arrowM)"/>
+  <path d="M450,250 L330,315" class="conn" marker-end="url(#arrowM)"/>
+  <path d="M600,250 L490,315" class="conn" marker-end="url(#arrowM)"/>
+  
+  <!-- Retrieval Components -->
+  <rect x="80" y="320" width="180" height="100" class="mod mod-retrieval"/>
+  <text x="170" y="350" text-anchor="middle" class="label mod-label" style="fill: #22c55e;">RETRIEVAL</text>
+  <text x="100" y="375" class="label sub-label">• VectorStoreManager</text>
+  <text x="100" y="392" class="label sub-label">• HybridSearcher</text>
+  <text x="100" y="409" class="label sub-label">• HyDE | RAPTOR</text>
+  
+  <rect x="280" y="320" width="140" height="100" class="mod mod-retrieval"/>
+  <text x="350" y="350" text-anchor="middle" class="label mod-label" style="fill: #22c55e;">SPARSE</text>
+  <text x="300" y="378" class="label sub-label">• BM25Searcher</text>
+  <text x="300" y="395" class="label sub-label">• rank_bm25</text>
+  
+  <rect x="440" y="320" width="140" height="100" class="mod mod-retrieval"/>
+  <text x="510" y="350" text-anchor="middle" class="label mod-label" style="fill: #22c55e;">HyDE</text>
+  <text x="460" y="378" class="label sub-label">• Hypothetical</text>
+  <text x="460" y="395" class="label sub-label">• LLM → Embed</text>
+  
+  <!-- Connector Retrieval → Rerank -->
+  <path d="M260,400 L620,370" class="conn" marker-end="url(#arrowM)"/>
+  <path d="M420,400 L620,370" class="conn" marker-end="url(#arrowM)"/>
+  <path d="M580,370 L620,370" class="conn" marker-end="url(#arrowM)"/>
+  
+  <!-- Reranking Components -->
+  <rect x="620" y="320" width="180" height="100" class="mod mod-rerank"/>
+  <text x="710" y="350" text-anchor="middle" class="label mod-label" style="fill: #fb923c;">RERANKING</text>
+  <text x="640" y="378" class="label sub-label">• CrossEncoder</text>
+  <text x="640" y="395" class="label sub-label">• ColBERT (MaxSim)</text>
+  <text x="640" y="412" class="label sub-label">• ms-marco-MiniLM</text>
+  
+  <!-- Connector Rerank → Generation -->
+  <line x1="710" y1="420" x2="710" y2="475" class="conn" marker-end="url(#arrowM)"/>
+  
+  <!-- Generation Components -->
+  <rect x="620" y="480" width="180" height="70" class="mod mod-gen glow-node"/>
+  <text x="710" y="510" text-anchor="middle" class="label mod-label" style="fill: #4ade80;">GENERATION</text>
+  <text x="640" y="535" class="label sub-label">• AnswerGenerator</text>
+  
+  <!-- Connector Generation → Core -->
+  <path d="M620,515 L450,590" class="conn" marker-end="url(#arrowM)"/>
+  
+  <!-- Core Layer -->
+  <rect x="250" y="570" width="400" height="60" class="mod mod-core"/>
+  <text x="450" y="595" text-anchor="middle" class="label mod-label" style="fill: #fbbf24;">CORE LAYER</text>
+  <text x="450" y="615" text-anchor="middle" class="label sub-label">LLMWrapper (ChatOllama) | EmbeddingWrapper (OllamaEmbeddings) | Config</text>
+  
+  <!-- Core → Retrieval (dashed - embeddings) -->
+  <path d="M350,570 L200,420" class="conn" stroke-dasharray="4 4"/>
+  
+  <!-- Traveling packets -->
+  <circle r="5" class="packet pkt-1"/>
+  <circle r="4" class="packet pkt-2a"/>
+  <circle r="4" class="packet pkt-2b"/>
+  <circle r="4" class="packet pkt-2c"/>
+  <circle r="4" class="packet pkt-3"/>
+  <circle r="4" class="packet pkt-4"/>
+  <circle r="4" class="packet pkt-5"/>
+  
+  <!-- Legend -->
+  <rect x="730" y="55" width="150" height="110" rx="8" fill="#1e293b" stroke="#334155"/>
+  <text x="805" y="75" text-anchor="middle" class="label" style="font-size: 10px;">DATA FLOW</text>
+  
+  <circle cx="750" cy="95" r="4" class="packet" style="animation: none;"/>
+  <text x="765" y="99" class="label sub-label">Data Packet</text>
+  
+  <line x1="745" y1="115" x2="765" y2="115" class="conn"/>
+  <text x="775" y="119" class="label sub-label">Static Conn</text>
+  
+  <line x1="745" y1="135" x2="765" y2="135" class="conn-active" style="animation: none;"/>
+  <text x="775" y="139" class="label sub-label">Active Flow</text>
+  
+  <line x1="745" y1="155" x2="765" y2="155" class="conn" stroke-dasharray="4 4"/>
+  <text x="775" y="159" class="label sub-label">Dependency</text>
+</svg>
