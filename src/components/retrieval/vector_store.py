@@ -115,9 +115,10 @@ class LangChainChromaVectorStore(BaseVectorStore):
         
         logger.info(f"Initialized LangChain ChromaDB vector store: {collection_name}")
     
-    def _doc_to_langchain(self, doc: Document) -> List[LangChainDocument]:
-        """Convert Document to LangChain Document."""
+    def _doc_to_langchain(self, doc: Document) -> Tuple[List[LangChainDocument], List[str]]:
+        """Convert Document to LangChain Document and IDs."""
         lc_docs = []
+        ids = []
         for chunk in doc.chunks:
             metadata = {
                 **chunk.metadata,
@@ -131,7 +132,8 @@ class LangChainChromaVectorStore(BaseVectorStore):
                 metadata=metadata,
             )
             lc_docs.append(lc_doc)
-        return lc_docs
+            ids.append(chunk.id)
+        return lc_docs, ids
     
     def add_documents(self, documents: List[Document]) -> None:
         """Add documents to the vector store using LangChain."""
@@ -139,11 +141,14 @@ class LangChainChromaVectorStore(BaseVectorStore):
             return
         
         lc_docs = []
+        ids = []
         for doc in documents:
-            lc_docs.extend(self._doc_to_langchain(doc))
+            docs, doc_ids = self._doc_to_langchain(doc)
+            lc_docs.extend(docs)
+            ids.extend(doc_ids)
         
         # Add to LangChain Chroma
-        self.vector_store.add_documents(documents=lc_docs)
+        self.vector_store.add_documents(documents=lc_docs, ids=ids)
         
         logger.info(f"Added {len(documents)} documents to LangChain ChromaDB")
     
@@ -202,39 +207,54 @@ class LangChainChromaVectorStore(BaseVectorStore):
     
     def get_document(self, document_id: str) -> Optional[Document]:
         """Get a document by ID."""
-        # This would require metadata filtering
-        # Simplified implementation
-        results = self.vector_store.similarity_search(
-            "", k=100  # Get all documents
-        )
-        
-        for doc in results:
-            if doc.metadata.get("document_id") == document_id:
-                # Reconstruct document
-                chunks = []
-                for result in results:
-                    if result.metadata.get("document_id") == document_id:
-                        chunk = DocumentChunk(
-                            id=result.metadata.get("id", generate_uuid()),
-                            content=result.page_content,
-                            metadata=result.metadata,
-                            chunk_index=result.metadata.get("chunk_index", 0),
-                        )
-                        chunks.append(chunk)
+        try:
+            # Use direct collection access for reliable retrieval
+            collection = self.vector_store._collection
+            result = collection.get(
+                where={"document_id": document_id},
+                include=["metadatas", "documents"]
+            )
+            
+            ids = result["ids"]
+            if not ids:
+                return None
+            
+            metadatas = result["metadatas"]
+            texts = result["documents"]
+            
+            chunks = []
+            for i, chunk_id in enumerate(ids):
+                metadata = metadatas[i] or {}
+                text = texts[i] or ""
                 
-                if chunks:
-                    first_chunk = chunks[0]
-                    document = Document(
-                        id=document_id,
-                        content="",  # Full content not stored
-                        chunks=chunks,
-                        metadata=first_chunk.metadata,
-                        source_type=first_chunk.metadata.get("source_type", "text"),
-                        source_path=first_chunk.metadata.get("source_path"),
-                    )
-                    return document
-        
-        return None
+                chunk = DocumentChunk(
+                    id=chunk_id,
+                    content=text,
+                    metadata=metadata,
+                    chunk_index=metadata.get("chunk_index", 0),
+                )
+                chunks.append(chunk)
+            
+            # Sort chunks by index
+            chunks.sort(key=lambda x: x.chunk_index)
+            
+            if not chunks:
+                return None
+                
+            first_chunk = chunks[0]
+            document = Document(
+                id=document_id,
+                content="",  # Full content not stored
+                chunks=chunks,
+                metadata=first_chunk.metadata,
+                source_type=first_chunk.metadata.get("source_type", "text"),
+                source_path=first_chunk.metadata.get("source_path"),
+            )
+            return document
+            
+        except Exception as e:
+            logger.error(f"Error getting document {document_id}: {e}")
+            return None
     
     def clear(self) -> None:
         """Clear all documents from the vector store."""
@@ -255,38 +275,56 @@ class LangChainChromaVectorStore(BaseVectorStore):
     
     def get_all_documents(self) -> List[Document]:
         """Get all documents from the store."""
-        results = self.vector_store.similarity_search("", k=10000)
-        
-        doc_chunks = {}
-        for doc in results:
-            doc_id = doc.metadata.get("document_id", "unknown")
-            if doc_id not in doc_chunks:
-                doc_chunks[doc_id] = []
+        try:
+            # Use direct collection access to get all documents
+            collection = self.vector_store._collection
+            # Get all items (limit logic handled by collection typically, or gets all)
+            result = collection.get(include=["metadatas", "documents"])
             
-            chunk = DocumentChunk(
-                id=doc.metadata.get("id", generate_uuid()),
-                content=doc.page_content,
-                metadata=doc.metadata,
-                chunk_index=doc.metadata.get("chunk_index", 0),
-            )
-            doc_chunks[doc_id].append(chunk)
-        
-        documents = []
-        for doc_id, chunks in doc_chunks.items():
-            chunks.sort(key=lambda x: x.chunk_index)
+            ids = result["ids"]
+            if not ids:
+                return []
             
-            first_chunk = chunks[0]
-            document = Document(
-                id=doc_id,
-                content="",
-                chunks=chunks,
-                metadata=first_chunk.metadata,
-                source_type=first_chunk.metadata.get("source_type", "text"),
-                source_path=first_chunk.metadata.get("source_path"),
-            )
-            documents.append(document)
-        
-        return documents
+            metadatas = result["metadatas"]
+            texts = result["documents"]
+            
+            doc_chunks = {}
+            for i, chunk_id in enumerate(ids):
+                metadata = metadatas[i] or {}
+                text = texts[i] or ""
+                doc_id = metadata.get("document_id", "unknown")
+                
+                if doc_id not in doc_chunks:
+                    doc_chunks[doc_id] = []
+                
+                chunk = DocumentChunk(
+                    id=chunk_id,
+                    content=text,
+                    metadata=metadata,
+                    chunk_index=metadata.get("chunk_index", 0),
+                )
+                doc_chunks[doc_id].append(chunk)
+            
+            documents = []
+            for doc_id, chunks in doc_chunks.items():
+                chunks.sort(key=lambda x: x.chunk_index)
+                
+                first_chunk = chunks[0]
+                document = Document(
+                    id=doc_id,
+                    content="",
+                    chunks=chunks,
+                    metadata=first_chunk.metadata,
+                    source_type=first_chunk.metadata.get("source_type", "text"),
+                    source_path=first_chunk.metadata.get("source_path"),
+                )
+                documents.append(document)
+            
+            return documents
+            
+        except Exception as e:
+            logger.error(f"Error getting all documents: {e}")
+            return []
 
 
 class VectorStoreManager:
