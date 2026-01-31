@@ -15,12 +15,16 @@ sentence-transformers
 
 # Vector Stores - chromadb 0.4.x with fastapi 0.95.x compatible
 chromadb
+langchain-chroma
 # Note: For Python 3.14, you may need to use chromadb without onnxruntime
 # or use alternative vector stores like FAISS or Qdrant
 
 # Alternative: Use FAISS instead of ChromaDB for Python 3.14
 faiss-cpu
 qdrant-client
+
+# UUID v7 (time-sortable UUIDs for better database performance)
+uuid7
 
 # Document Processing
 pypdf

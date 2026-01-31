@@ -8,7 +8,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 import hashlib
 import logging
-import uuid
+
+# Direct import to avoid circular dependency
+from src.core.uuid_utils import generate_uuid  # UUID v7 for time-sorted IDs
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +71,7 @@ class Document:
     
     def __post_init__(self):
         if not self.id:
-            self.id = str(uuid.uuid4())
+            self.id = generate_uuid()
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert document to dictionary."""
@@ -231,7 +233,7 @@ class RecursiveChunker(BaseChunker):
         length: int,
     ) -> DocumentChunk:
         """Create a document chunk."""
-        chunk_id = str(uuid.uuid4())
+        chunk_id = generate_uuid()
         
         return DocumentChunk(
             id=chunk_id,
@@ -338,7 +340,7 @@ class FixedSizeChunker(BaseChunker):
             content = text[start:end]
             
             chunk = DocumentChunk(
-                id=str(uuid.uuid4()),
+                id=generate_uuid(),
                 content=content,
                 metadata=metadata or {},
                 start_char_idx=start,
@@ -398,7 +400,7 @@ class SentenceChunker(BaseChunker):
             else:
                 if current_chunk:
                     chunk = DocumentChunk(
-                        id=str(uuid.uuid4()),
+                        id=generate_uuid(),
                         content=current_chunk.strip(),
                         metadata=metadata or {},
                         start_char_idx=0,
@@ -413,7 +415,7 @@ class SentenceChunker(BaseChunker):
         
         if current_chunk:
             chunk = DocumentChunk(
-                id=str(uuid.uuid4()),
+                id=generate_uuid(),
                 content=current_chunk.strip(),
                 metadata=metadata or {},
                 start_char_idx=0,
@@ -481,7 +483,7 @@ class DocumentProcessor:
         doc_id: Optional[str] = None,
     ) -> Document:
         """Process plain text into a document with chunks."""
-        doc_id = doc_id or str(uuid.uuid4())
+        doc_id = doc_id or generate_uuid()
         
         # Clean the text
         text = self._clean_text(text)

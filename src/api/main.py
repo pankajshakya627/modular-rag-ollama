@@ -9,7 +9,6 @@ from fastapi.responses import JSONResponse
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import BaseMessage
 import logging
-import uuid
 
 from .models import (
     QueryRequest,

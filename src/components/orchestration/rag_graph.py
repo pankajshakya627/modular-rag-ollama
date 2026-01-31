@@ -18,6 +18,8 @@ from ..reranking.base import BaseReranker, RerankedResult
 from ..generation.answer_generator import AnswerGenerator, AnswerResult
 from ...core.llm import LLMWrapper, get_llm
 from ...core.embedding import EmbeddingWrapper, get_embedding
+# Direct import to avoid circular dependency
+from src.core.uuid_utils import generate_uuid  # UUID v7
 
 logger = logging.getLogger(__name__)
 
@@ -489,7 +491,7 @@ Hypothetical Answer:""",
         }
         
         # LangGraph config for checkpointing
-        graph_config = {"configurable": {"thread_id": str(uuid.uuid4())}}
+        graph_config = {"configurable": {"thread_id": generate_uuid()}}
         if config:
             graph_config["configurable"].update(config)
         
@@ -531,7 +533,7 @@ Hypothetical Answer:""",
         }
         
         # Stream the LangGraph
-        config = {"configurable": {"thread_id": str(uuid.uuid4())}}
+        config = {"configurable": {"thread_id": generate_uuid()}}
         for state in self.graph.stream(initial_state, config=config):
             yield state
 

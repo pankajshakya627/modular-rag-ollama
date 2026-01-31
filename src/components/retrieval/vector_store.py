@@ -4,7 +4,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 import logging
-import uuid
+
+# Direct import to avoid circular dependency
+from src.core.uuid_utils import generate_uuid  # UUID v7
 
 import numpy as np
 from langchain_chroma import Chroma
@@ -164,7 +166,7 @@ class LangChainChromaVectorStore(BaseVectorStore):
         for doc in results:
             # Get the score (LangChain doesn't return scores by default in similarity_search)
             result = SearchResult(
-                id=doc.metadata.get("id", str(uuid.uuid4())),
+                id=doc.metadata.get("id", generate_uuid()),
                 content=doc.page_content,
                 score=0.9,  # LangChain similarity_search doesn't return scores
                 metadata=doc.metadata,
@@ -213,7 +215,7 @@ class LangChainChromaVectorStore(BaseVectorStore):
                 for result in results:
                     if result.metadata.get("document_id") == document_id:
                         chunk = DocumentChunk(
-                            id=result.metadata.get("id", str(uuid.uuid4())),
+                            id=result.metadata.get("id", generate_uuid()),
                             content=result.page_content,
                             metadata=result.metadata,
                             chunk_index=result.metadata.get("chunk_index", 0),
@@ -262,7 +264,7 @@ class LangChainChromaVectorStore(BaseVectorStore):
                 doc_chunks[doc_id] = []
             
             chunk = DocumentChunk(
-                id=doc.metadata.get("id", str(uuid.uuid4())),
+                id=doc.metadata.get("id", generate_uuid()),
                 content=doc.page_content,
                 metadata=doc.metadata,
                 chunk_index=doc.metadata.get("chunk_index", 0),

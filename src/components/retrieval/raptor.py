@@ -2,7 +2,9 @@
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 import logging
-import uuid
+
+# Direct import to avoid circular dependency
+from src.core.uuid_utils import generate_uuid  # UUID v7
 
 import numpy as np
 from sklearn.cluster import KMeans
@@ -126,7 +128,7 @@ class RAPTORRetriever:
                 summary = self._summarize_cluster(cluster_chunks)
             
             cluster_summary = ClusterSummary(
-                id=str(uuid.uuid4()),
+                id=generate_uuid(),
                 chunk_ids=chunk_ids,
                 summary=summary,
                 centroid_embedding=centroid,
