@@ -1,0 +1,87 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "modular-rag-ollama"
+version = "1.0.0"
+description = "A production-grade, modular RAG framework powered by Ollama. Featuring LangGraph orchestration, Hybrid Search, HyDE, and RAPTOR for advanced document retrieval and reasoning."
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "Modular RAG Team"}
+]
+keywords = [
+    "rag", "retrieval-augmented-generation", "llm", "nlp",
+    "hyde", "raptor", "hybrid-search", "langgraph", "ollama"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+
+dependencies = [
+    "langchain",
+    "langchain-community",
+    "langchain-core",
+    "langchain-ollama",
+    "langgraph",
+    "chromadb",
+    "faiss-cpu",
+    "rank-bm25",
+    "fastapi",
+    "uvicorn",
+    "pydantic",
+    "pydantic-settings",
+    "pyyaml",
+    "python-dotenv",
+    "numpy",
+    "scikit-learn",
+    "pytest",
+    "pytest-asyncio",
+    "transformers",
+    "beautifulsoup4",
+    "pypdf",
+    "python-docx",
+]
+
+[project.optional-dependencies]
+dev = [
+    "black",
+    "isort",
+    "mypy",
+    "flake8",
+    "pytest-cov",
+    "httpx",
+]
+
+[project.scripts]
+modular-rag = "src.main:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+
+[tool.black]
+line-length = 100
+target-version = ['py310', 'py311', 'py312', 'py313']
+
+[tool.isort]
+profile = "black"
+line_length = 100
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true

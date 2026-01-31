@@ -1,0 +1,77 @@
+# Modular RAG - Production Ready Requirements
+# Compatible with Python 3.13+
+
+# Core Dependencies
+langchain
+langchain-community
+langchain-core
+langchain-ollama
+langgraph
+
+# LLM and Embedding - compatible versions
+ollama
+transformers
+sentence-transformers
+
+# Vector Stores - chromadb 0.4.x with fastapi 0.95.x compatible
+chromadb
+# Note: For Python 3.14, you may need to use chromadb without onnxruntime
+# or use alternative vector stores like FAISS or Qdrant
+
+# Alternative: Use FAISS instead of ChromaDB for Python 3.14
+faiss-cpu
+qdrant-client
+
+# Document Processing
+pypdf
+python-docx
+beautifulsoup4
+markdown
+
+# NLP and Text Processing
+nltk
+spacy
+regex
+
+# BM25
+rank_bm25
+
+# API and Server - chromadb 0.4.x compatible
+fastapi
+uvicorn
+pydantic
+pydantic-settings
+
+# Configuration
+pyyaml
+python-dotenv
+
+# Evaluation
+rouge-score
+nltk
+scikit-learn
+numpy
+
+# Utilities
+tqdm
+colorlog
+structlog
+
+# Caching
+diskcache
+
+# Monitoring and Metrics
+prometheus-client
+psutil
+
+# Testing
+pytest
+pytest-asyncio
+pytest-cov
+httpx
+
+# Development
+black
+isort
+mypy
+flake8
