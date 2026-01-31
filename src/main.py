@@ -1,6 +1,8 @@
 """Main entry point for Modular RAG using LangChain and LangGraph."""
 import uvicorn
 import logging
+import argparse
+import os
 from src.core.config import get_config
 
 # Configure logging
@@ -13,8 +15,6 @@ logger = logging.getLogger(__name__)
 
 def main():
     """Main entry point with LangChain/LangGraph support."""
-    import argparse
-    
     parser = argparse.ArgumentParser(description="Modular RAG System (LangChain + LangGraph)")
     parser.add_argument(
         "--mode",
@@ -38,6 +38,22 @@ def main():
         action="store_true",
         help="Enable auto-reload for development"
     )
+    # Index mode arguments
+    parser.add_argument(
+        "--path",
+        help="File or directory to index (for --mode index)"
+    )
+    parser.add_argument(
+        "--recursive",
+        action="store_true",
+        help="Recursively index directory"
+    )
+    parser.add_argument(
+        "--chunk-size",
+        type=int,
+        default=1024,
+        help="Chunk size for indexing"
+    )
     
     args = parser.parse_args()
     
@@ -46,7 +62,9 @@ def main():
     elif args.mode == "cli":
         run_cli()
     elif args.mode == "index":
-        run_index()
+        if not args.path:
+            parser.error("--mode index requires --path argument")
+        run_index(args.path, args.recursive, args.chunk_size)
 
 
 def run_api(host: str, port: int, reload: bool):
@@ -60,26 +78,14 @@ def run_api(host: str, port: int, reload: bool):
             logger.info("LangChain LLM started processing")
         
         def on_llm_end(self, response, **kwargs):
-            logger.info("LangChain LLM completed processing")
-        
-        def on_retriever_start(self, query, **kwargs):
-            logger.info(f"LangChain retriever started: {query[:50]}...")
-        
-        def on_retriever_end(self, documents, **kwargs):
-            logger.info(f"LangChain retriever completed with {len(documents)} documents")
+            logger.info("LangChain LLM finished processing")
     
-    config = get_config()
-    
-    logger.info(f"Starting Modular RAG API with LangChain {config.app.version}")
-    logger.info(f"LLM Model: {config.llm.model}")
-    logger.info(f"Embedding Model: {config.embedding.model}")
-    
+    logger.info(f"Starting LangChain/LangGraph API server on {host}:{port}")
     uvicorn.run(
         "src.api.main:app",
         host=host,
         port=port,
         reload=reload,
-        log_level="info",
     )
 
 
@@ -91,35 +97,30 @@ def run_cli():
     
     workflow = ModularRAGWorkflow()
     
-    print("Modular RAG CLI (Powered by LangChain + LangGraph)")
-    print("=" * 50)
-    print("Type 'exit' or 'quit' to exit")
-    print()
+    print("\n=== Modular RAG CLI (LangChain + LangGraph) ===")
+    print("Type 'quit' to exit\n")
     
     while True:
         try:
             query = input("You: ").strip()
-            
-            if query.lower() in ["exit", "quit"]:
-                print("Goodbye!")
-                break
-            
             if not query:
                 continue
+            if query.lower() in ['quit', 'exit', 'q']:
+                break
             
-            print("\nThinking (using LangGraph workflow)...")
+            # Run query through LangGraph workflow
             result = workflow.query(query)
             
-            print(f"\nAnswer: {result.get('answer', 'No answer')}")
-            print(f"Confidence: {result.get('confidence', 0.0):.2f}")
+            print(f"\n📝 Answer: {result['answer']}")
+            print(f"📊 Confidence: {result['confidence']:.2%}")
             
             if result.get('sources'):
-                print(f"\nSources ({len(result['sources'])}):")
-                for i, src in enumerate(result['sources'][:3], 1):
-                    print(f"  {i}. {src.get('content', '')[:100]}...")
+                print("\n📚 Sources:")
+                for i, source in enumerate(result['sources'][:3], 1):
+                    print(f"  {i}. {source.get('document_id', 'Unknown')}")
             
             if result.get('decomposed_queries'):
-                print(f"\nSub-queries analyzed: {len(result['decomposed_queries'])}")
+                print(f"\n🔍 Sub-queries analyzed: {len(result['decomposed_queries'])}")
             
             print()
             
@@ -130,29 +131,8 @@ def run_cli():
             print(f"Error: {e}")
 
 
-def run_index():
+def run_index(path: str, recursive: bool, chunk_size: int):
     """Run indexing mode with LangChain vector store."""
-    import argparse
-    
-    parser = argparse.ArgumentParser(description="Index documents using LangChain")
-    parser.add_argument(
-        "path",
-        help="File or directory to index"
-    )
-    parser.add_argument(
-        "--recursive",
-        action="store_true",
-        help="Recursively index directory"
-    )
-    parser.add_argument(
-        "--chunk-size",
-        type=int,
-        default=1024,
-        help="Chunk size"
-    )
-    
-    args = parser.parse_args()
-    
     from src.components.retrieval.document_processor import DocumentProcessor, ChunkingStrategy
     from src.components.retrieval.vector_store import VectorStoreManager, LangChainChromaVectorStore
     from src.core.embedding import get_embedding
@@ -163,26 +143,28 @@ def run_index():
     
     processor = DocumentProcessor(
         chunking_strategy=ChunkingStrategy.RECURSIVE,
-        chunk_size=args.chunk_size,
+        chunk_size=chunk_size,
         embedding_wrapper=embedding,
     )
     
-    import os
-    
-    if os.path.isfile(args.path):
-        documents = [processor.process_file(args.path)]
-    elif os.path.isdir(args.path):
-        documents = processor.process_directory(
-            args.path,
-            recursive=args.recursive,
-        )
+    if os.path.isfile(path):
+        print(f"📄 Processing file: {path}")
+        documents = [processor.process_file(path)]
+    elif os.path.isdir(path):
+        print(f"📁 Processing directory: {path} (recursive={recursive})")
+        documents = processor.process_directory(path, recursive=recursive)
     else:
-        print(f"Error: {args.path} is not a valid file or directory")
+        print(f"❌ Error: {path} is not a valid file or directory")
         return
     
-    print(f"Processing {len(documents)} documents with LangChain...")
+    print(f"📊 Found {len(documents)} documents")
+    
+    total_chunks = sum(len(doc.chunks) for doc in documents if doc.chunks)
+    print(f"📑 Total chunks: {total_chunks}")
+    
+    print("🔄 Indexing with LangChain ChromaDB...")
     vsm.index_documents(documents)
-    print(f"Indexed {len(documents)} documents successfully using LangChain ChromaDB!")
+    print(f"✅ Indexed {len(documents)} documents successfully!")
 
 
 if __name__ == "__main__":

@@ -257,7 +257,51 @@ python -m src.main --mode api --port 8000
 
 ## 🔌 API Endpoints
 
-### Query
+Base URL: `http://localhost:8000`
+
+### Overview
+
+| Method   | Endpoint     | Description               |
+| -------- | ------------ | ------------------------- |
+| `GET`    | `/health`    | System health check       |
+| `POST`   | `/query`     | RAG query processing      |
+| `POST`   | `/index`     | Index documents           |
+| `GET`    | `/search`    | Vector similarity search  |
+| `GET`    | `/documents` | List indexed documents    |
+| `GET`    | `/stats`     | System statistics         |
+| `DELETE` | `/documents` | Delete specific documents |
+| `DELETE` | `/index`     | Clear entire index        |
+
+---
+
+### `GET /health` — System Health Check
+
+Check if LLM, embeddings, and vector store are available.
+
+```bash
+curl http://localhost:8000/health
+```
+
+**Response:**
+
+```json
+{
+  "status": "healthy",
+  "version": "1.0.0",
+  "llm_available": true,
+  "embedding_available": true,
+  "vector_store_stats": {
+    "document_count": 42,
+    "chunk_count": 1250
+  }
+}
+```
+
+---
+
+### `POST /query` — RAG Query Processing
+
+Process a query through the full LangGraph RAG pipeline (retrieval → fusion → rerank → generate).
 
 ```bash
 curl -X POST http://localhost:8000/query \
@@ -265,17 +309,189 @@ curl -X POST http://localhost:8000/query \
   -d '{"query": "What is Modular RAG?"}'
 ```
 
-### Index Document
+**Request Body:**
 
-```bash
-curl -X POST http://localhost:8000/index \
-  -d '{"file_path": "/path/to/document.pdf"}'
+```json
+{
+  "query": "What is Modular RAG?",
+  "use_hyde": true, // optional, default true
+  "use_decomposition": true // optional, default true
+}
 ```
 
-### Health Check
+**Response:**
+
+```json
+{
+  "query": "What is Modular RAG?",
+  "answer": "Modular RAG is a production-ready RAG system that combines...",
+  "confidence": 0.87,
+  "sources": [
+    { "document_id": "doc_001", "chunk_id": 3, "score": 0.92 },
+    { "document_id": "doc_002", "chunk_id": 7, "score": 0.85 }
+  ],
+  "workflow_stage": "completed",
+  "decomposed_queries": ["What is RAG?", "What makes it modular?"],
+  "stepback_query": "What are RAG systems?",
+  "processing_time": 1.23
+}
+```
+
+---
+
+### `POST /index` — Index Documents
+
+Index a file or directory into ChromaDB using LangChain embeddings.
 
 ```bash
-curl http://localhost:8000/health
+# Index a single file
+curl -X POST http://localhost:8000/index \
+  -H "Content-Type: application/json" \
+  -d '{"file_path": "/path/to/document.pdf"}'
+
+# Index a directory recursively
+curl -X POST http://localhost:8000/index \
+  -H "Content-Type: application/json" \
+  -d '{"file_path": "/path/to/docs/", "recursive": true}'
+```
+
+**Request Body:**
+
+```json
+{
+  "file_path": "/path/to/document.pdf",
+  "recursive": false, // optional, for directories
+  "chunk_size": 1024, // optional
+  "chunk_overlap": 200 // optional
+}
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "documents_indexed": 5,
+  "chunks_created": 127,
+  "message": "Indexed 5 documents successfully"
+}
+```
+
+---
+
+### `GET /search` — Vector Similarity Search
+
+Direct vector store search without RAG processing.
+
+```bash
+curl "http://localhost:8000/search?query=machine%20learning&top_k=5"
+```
+
+**Query Parameters:**
+
+- `query` (required): Search query string
+- `top_k` (optional): Number of results (1-100, default 10)
+
+**Response:**
+
+```json
+{
+  "query": "machine learning",
+  "results": [
+    {
+      "id": "chunk_123",
+      "content": "Machine learning is a subset of AI...",
+      "score": 0.89,
+      "document_id": "doc_001",
+      "metadata": { "source": "ml_intro.pdf", "page": 3 }
+    }
+  ],
+  "total_results": 5
+}
+```
+
+---
+
+### `GET /documents` — List Indexed Documents
+
+List all documents currently in the vector store.
+
+```bash
+curl http://localhost:8000/documents
+```
+
+**Response:**
+
+```json
+[
+  {
+    "id": "doc_001",
+    "content_preview": "Introduction to RAG systems...",
+    "source_type": "pdf",
+    "source_path": "/data/documents/rag_intro.pdf",
+    "chunk_count": 25
+  }
+]
+```
+
+---
+
+### `GET /stats` — System Statistics
+
+Get document and chunk counts.
+
+```bash
+curl http://localhost:8000/stats
+```
+
+**Response:**
+
+```json
+{
+  "total_documents": 42,
+  "total_chunks": 1250,
+  "index_size_mb": 45.2
+}
+```
+
+---
+
+### `DELETE /documents` — Delete Specific Documents
+
+Delete documents by IDs.
+
+```bash
+curl -X DELETE http://localhost:8000/documents \
+  -H "Content-Type: application/json" \
+  -d '{"document_ids": ["doc_001", "doc_002"]}'
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "documents_deleted": 2
+}
+```
+
+---
+
+### `DELETE /index` — Clear Entire Index
+
+Delete all documents and reset the vector store.
+
+```bash
+curl -X DELETE http://localhost:8000/index
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "message": "Index cleared successfully"
+}
 ```
 
 ---
