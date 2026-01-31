@@ -32,7 +32,7 @@ This document provides visual architecture diagrams and component interaction fl
 │  │                        LangGraph State Machine                              │   │
 │  │   ┌────────┐    ┌────────┐    ┌────────┐    ┌────────┐    ┌────────┐        │   │
 │  │   │ Query  │───▶│Retrieve│───▶│ Fuse   │───▶│Rerank  │───▶│Generate│        │   │
-│  │   │Analysis│    │  ×3   │    │Results │    │Top-K   │    │ Answer │         │   │
+│  │   │Analysis│    │  ×3    │    │Results │    │Top-K   │    │ Answer │        │   │
 │  │   └────────┘    └────────┘    └────────┘    └────────┘    └────────┘        │   │
 │  └─────────────────────────────────────────────────────────────────────────────┘   │
 └────────────────────────────────────────┬───────────────────────────────────────────┘

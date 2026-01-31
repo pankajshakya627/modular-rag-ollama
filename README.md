@@ -4,127 +4,258 @@ A modular, production-ready Retrieval-Augmented Generation (RAG) system built wi
 
 ![Modular RAG](https://img.shields.io/badge/version-1.0.0-blue) ![Python 3.10+](https://img.shields.io/badge/python-3.10+-green) ![License MIT](https://img.shields.io/badge/license-MIT-yellow)
 
-## Features
+---
 
-### Query Enhancement
+## 🎯 Why This RAG?
 
-- **HyDE (Hypothetical Document Embeddings)**: Generates hypothetical answers to improve retrieval quality
-- **Query Decomposition**: Breaks complex queries into simpler sub-questions
-- **Step-back Prompting**: Generates broader queries for better context
+Most RAG implementations use a simple pattern that **fails in production**:
 
-### Retrieval Optimization
+| Problem                                             | Naive RAG                   | This System               |
+| --------------------------------------------------- | --------------------------- | ------------------------- |
+| Query "heart attack" vs doc "myocardial infarction" | ❌ Misses match             | ✅ HyDE bridges vocab gap |
+| User searches "error 0x80070005"                    | ❌ Embeddings fail on codes | ✅ BM25 handles lexical   |
+| Answer needs info from 3 sections                   | ❌ Fragments context        | ✅ RAPTOR clusters docs   |
+| Top-10 has 5 irrelevant chunks                      | ❌ Dilutes quality          | ✅ Cross-encoder reranks  |
 
-- **Hybrid Search**: Combines BM25 (sparse) and dense vector retrieval
-- **RAPTOR**: Hierarchical document clustering and summarization
-- **Granularity-Aware Retrieval**: Long-context chunking with span filtering
+---
 
-### Reranking Methods
+## 🏗️ System Architecture
 
-- **ColBERT**: Late interaction for token-level matching
-- **Cross-Encoder**: Transformer-based query-document scoring
-- **Instruction-Following Rerankers**: SOTA reranking capabilities
+![System Architecture](docs/assets/architecture-layers.svg)
 
-### Production Ready
-
-- **LangGraph Orchestration**: Graph-based workflow with checkpointing
-- **FastAPI Endpoints**: RESTful API for easy integration
-- **Comprehensive Evaluation**: Precision, recall, faithfulness, and more
-
-## Architecture
+<details>
+<summary>📋 Text-based diagram (for terminals)</summary>
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    Modular RAG Architecture                 │
-├─────────────────────────────────────────────────────────────┤
-│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐   │
-│  │   Query      │    │  Retrieval   │    │   Answer     │   │
-│  │ Enhancement  │───▶│  Pipeline    │───▶│  Generation  │   │
-│  └──────────────┘    └──────────────┘    └──────────────┘   │
-│         │                    │                    │         │
-│         ▼                    ▼                    ▼         │
-│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐   │
-│  │ • HyDE       │    │ • Hybrid     │    │ • Response   │   │
-│  │ • Decompos.  │    │   Search     │    │   Synthesis  │   │
-│  │ • Step-back  │    │ • RAPTOR     │    │ • Confidence │   │
-│  └──────────────┘    │ • BM25       │    └──────────────┘   │
-│                      └──────────────┘                       │
-│                             │                               │
-│                             ▼                               │
-│                      ┌──────────────┐                       │
-│                      │  Reranking   │                       │
-│                      │ • ColBERT    │                       │
-│                      │ • Cross-Enc. │                       │
-│                      └──────────────┘                       │
+│                        FastAPI Layer                         │
+│                    POST /query | WS /ws/query                │
+└──────────────────────────┬──────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────┐
+│                  LangGraph Orchestrator                      │
+│   Query Analysis → Retrieve ×3 → Fuse → Rerank → Generate   │
+└──────────────────────────┬──────────────────────────────────┘
+                           │
+       ┌───────────────────┼───────────────────┐
+       │                   │                   │
+       ▼                   ▼                   ▼
+┌─────────────┐    ┌─────────────┐    ┌─────────────┐
+│  Retrieval  │    │  Reranking  │    │ Generation  │
+├─────────────┤    ├─────────────┤    ├─────────────┤
+│ HybridSearch│    │CrossEncoder │    │ AnswerGen   │
+│ HyDE        │    │ ColBERT     │    │ Synthesizer │
+│ RAPTOR      │    └─────────────┘    └─────────────┘
+└─────────────┘
+       │
+       ▼
+┌─────────────────────────────────────────────────────────────┐
+│                       Core Layer                             │
+│   LLMWrapper (ChatOllama) | EmbeddingWrapper | Config        │
+└─────────────────────────────────────────────────────────────┘
+       │
+       ▼
+┌─────────────────────────────────────────────────────────────┐
+│                   Infrastructure Layer                       │
+│       Ollama Server | ChromaDB | File System                 │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-## Quick Start
+</details>
 
-# Clone the repository
+---
 
+## 🔄 Query Processing Flow
+
+![Query Flow](docs/assets/query-flow.svg)
+
+### Step-by-Step Flow
+
+```mermaid
+flowchart TD
+    A[👤 User Query] --> B[Query Analysis]
+    B --> C{Complex?}
+
+    C -->|Yes| D[Decompose]
+    C -->|No| E[Direct]
+
+    D --> F[⚡ Parallel Retrieval]
+    E --> F
+
+    F --> G[Dense<br/>ChromaDB]
+    F --> H[Sparse<br/>BM25]
+    F --> I[HyDE<br/>Hypothetical]
+
+    G --> J[🔀 Reciprocal Rank Fusion]
+    H --> J
+    I --> J
+
+    J --> K[🎯 Reranking<br/>CrossEncoder]
+    K --> L[📝 Answer Generation<br/>ChatOllama]
+    L --> M[✅ Response + Sources]
+```
+
+---
+
+## 🧠 How Each Component Works
+
+### 1. Hybrid Search (BM25 + Dense)
+
+```mermaid
+flowchart LR
+    subgraph Dense["Dense Retrieval"]
+        A1[Query] --> B1[Embed]
+        B1 --> C1[ChromaDB]
+        C1 --> D1[Top-K by cosine]
+    end
+
+    subgraph Sparse["Sparse Retrieval"]
+        A2[Query] --> B2[Tokenize]
+        B2 --> C2[BM25 Index]
+        C2 --> D2[Top-K by TF-IDF]
+    end
+
+    D1 --> E[RRF Fusion]
+    D2 --> E
+    E --> F[Merged Rankings]
+```
+
+**Why both?**
+
+- **Dense** catches semantic similarity ("car" ≈ "automobile")
+- **Sparse** catches exact matches ("error 0x80070005")
+
+---
+
+### 2. HyDE (Hypothetical Document Embeddings)
+
+```mermaid
+flowchart LR
+    A[Query:<br/>'What causes diabetes?'] --> B[LLM generates<br/>hypothetical answer]
+    B --> C['Diabetes is caused by<br/>insulin resistance...']
+    C --> D[Embed hypothetical]
+    D --> E[Search ChromaDB]
+    E --> F[Retrieve similar docs]
+```
+
+**Why?** Transforms short queries into document-style embeddings for better matching.
+
+---
+
+### 3. RAPTOR (Hierarchical Retrieval)
+
+```mermaid
+flowchart TB
+    subgraph Level0["Level 0: Chunks"]
+        A[Chunk 1]
+        B[Chunk 2]
+        C[Chunk 3]
+        D[Chunk 4]
+        E[Chunk 5]
+        F[Chunk 6]
+    end
+
+    subgraph Level1["Level 1: Cluster Summaries"]
+        A --> G[Summary A]
+        B --> G
+        C --> G
+        D --> H[Summary B]
+        E --> H
+        F --> H
+    end
+
+    subgraph Level2["Level 2: Meta-Summary"]
+        G --> I[Top Summary]
+        H --> I
+    end
+
+    J[Query] --> I
+    J --> G
+    J --> H
+    J --> A
+```
+
+**Why?** Enables multi-hop reasoning by clustering related chunks.
+
+---
+
+### 4. Two-Stage Reranking
+
+```mermaid
+flowchart LR
+    subgraph Stage1["Stage 1: Retrieval (Fast)"]
+        A[Query] --> B[Bi-Encoder]
+        B --> C[Query Vector]
+        D[Docs] --> E[Doc Vectors]
+        C --> F[cosine sim]
+        E --> F
+        F --> G[Top-50]
+    end
+
+    subgraph Stage2["Stage 2: Reranking (Precise)"]
+        G --> H[Cross-Encoder]
+        H --> I["[CLS] Q [SEP] D [SEP]"]
+        I --> J[Full Attention]
+        J --> K[Top-10]
+    end
+```
+
+**Why?** Bi-encoders are fast but miss query-doc interactions. Cross-encoders see the full context.
+
+---
+
+### 5. LangGraph State Machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> QueryAnalysis
+    QueryAnalysis --> DenseRetrieval
+    QueryAnalysis --> SparseRetrieval
+    QueryAnalysis --> HyDERetrieval
+
+    DenseRetrieval --> Fusion
+    SparseRetrieval --> Fusion
+    HyDERetrieval --> Fusion
+
+    Fusion --> Reranking
+    Reranking --> Generation
+    Generation --> [*]
+
+    Reranking --> Fusion: Retry if low confidence
+```
+
+**Why LangGraph over chains?**
+
+- Parallel execution (3 retrievers simultaneously)
+- State persistence across steps
+- Error recovery and retries
+
+---
+
+## ⚡ Quick Start
+
+```bash
+# Clone
 git clone https://github.com/pankajshakya627/modular-rag-ollama.git
 cd modular-rag-ollama
 
-# Install dependencies
-
+# Install
 pip install -r requirements.txt
-
-# Install the package
-
 pip install -e .
 
-````
-
-### Configuration
-
-Edit `config/config.yaml` to configure:
-
-```yaml
-llm:
-  model: "rnj-1:8b"
-  base_url: "http://localhost:11434"
-
-embedding:
-  model: "nomic-embed-text-v2-moe"
-  base_url: "http://localhost:11434"
-````
-
-### Start Ollama
-
-```bash
-# Pull required models
-ollama pull rnj-1:8b
-ollama pull nomic-embed-text-v2-moe
-
-# Start Ollama server
+# Start Ollama
+ollama pull llama3:8b
+ollama pull nomic-embed-text
 ollama serve
-```
 
-### Run the API
-
-```bash
-# Start the FastAPI server
+# Run API
 python -m src.main --mode api --port 8000
 ```
 
-### Use the CLI
+---
 
-```bash
-# Interactive CLI mode
-python -m src.main --mode cli
-```
-
-### Index Documents
-
-```bash
-# Index a single file
-python -m src.main --mode index /path/to/document.pdf
-
-# Index a directory
-python -m src.main --mode index /path/to/documents/
-```
-
-## API Endpoints
+## 🔌 API Endpoints
 
 ### Query
 
@@ -138,7 +269,6 @@ curl -X POST http://localhost:8000/query \
 
 ```bash
 curl -X POST http://localhost:8000/index \
-  -H "Content-Type: application/json" \
   -d '{"file_path": "/path/to/document.pdf"}'
 ```
 
@@ -148,173 +278,127 @@ curl -X POST http://localhost:8000/index \
 curl http://localhost:8000/health
 ```
 
-## Programmatic Usage
+---
+
+## 🐍 Python Usage
 
 ```python
-from modular_rag import ModularRAGWorkflow
+from src.components.orchestration.rag_graph import ModularRAGWorkflow
 
-# Initialize workflow
 workflow = ModularRAGWorkflow()
-
-# Query
 result = workflow.query("What is RAG?")
+
 print(result["answer"])
 print(f"Confidence: {result['confidence']}")
+print(f"Sources: {result['sources']}")
 ```
 
-## Project Structure
+---
+
+## 📁 Project Structure
 
 ```
-modular_rag/
-├── config/
-│   └── config.yaml          # Configuration file
+modular-rag-ollama/
 ├── src/
-│   ├── api/
-│   │   ├── main.py          # FastAPI application
-│   │   └── models.py        # Pydantic models
+│   ├── core/                 # LLM, Embedding, Config
 │   ├── components/
-│   │   ├── generation/
-│   │   │   └── answer_generator.py
-│   │   ├── orchestration/
-│   │   │   └── rag_graph.py # LangGraph workflow
-│   │   ├── reranking/
-│   │   │   ├── base.py
-│   │   │   ├── colbert.py
-│   │   │   └── cross_encoder.py
-│   │   └── retrieval/
-│   │       ├── document_processor.py
-│   │       ├── hybrid_search.py
-│   │       ├── hyde.py
-│   │       ├── raptor.py
-│   │       └── vector_store.py
-│   ├── core/
-│   │   ├── config.py        # Configuration loader
-│   │   ├── embedding.py     # Ollama embeddings
-│   │   └── llm.py           # Ollama LLM wrapper
-│   ├── utils/
-│   │   └── evaluation.py    # Evaluation metrics
-│   └── main.py              # CLI entry point
-├── tests/
-│   └── test_rag.py          # Unit tests
-├── pyproject.toml
-├── requirements.txt
-└── README.md
+│   │   ├── retrieval/        # VectorStore, HyDE, RAPTOR, Hybrid
+│   │   ├── reranking/        # CrossEncoder, ColBERT
+│   │   ├── generation/       # AnswerGenerator
+│   │   └── orchestration/    # LangGraph workflow
+│   └── api/                  # FastAPI endpoints
+├── config/config.yaml        # Configuration
+├── docs/                     # HLD, LLD, Architecture
+└── tests/                    # Pytest tests
 ```
 
-## Components
+---
 
-### Document Processing
-
-- **RecursiveChunker**: Hierarchical text splitting
-- **SemanticChunker**: Embedding-based semantic chunking
-- **FixedSizeChunker**: Simple fixed-size chunks
-- **SentenceChunker**: Sentence-based splitting
-
-### Retrieval
-
-- **HybridSearcher**: BM25 + Dense vector fusion
-- **HyDERetriever**: Hypothetical document embeddings
-- **RAPTORRetriever**: Hierarchical clustering and summarization
-
-### Reranking
-
-- **ColBERTReranker**: Late interaction scoring
-- **CrossEncoderReranker**: Transformer-based scoring
-- **LLMEnsembleReranker**: LLM-based relevance scoring
-
-### Evaluation
-
-- **RetrievalEvaluator**: Precision, recall, MRR, NDCG
-- **GenerationEvaluator**: Answer relevancy, faithfulness
-- **RAGEvaluator**: End-to-end RAG evaluation
-
-## Configuration Options
-
-### HyDE
+## ⚙️ Configuration
 
 ```yaml
+# config/config.yaml
+llm:
+  model: "llama3:8b"
+  base_url: "http://localhost:11434"
+
+embedding:
+  model: "nomic-embed-text"
+
 hyde:
   enabled: true
   temperature: 0.3
-  max_tokens: 512
-```
 
-### RAPTOR
+hybrid_search:
+  fusion_method: "rrf" # rrf, weighted
+  alpha: 0.5
 
-```yaml
 raptor:
   enabled: true
   num_clusters: 5
-  max_summary_length: 512
 ```
 
-### Hybrid Search
+---
 
-```yaml
-hybrid_search:
-  enabled: true
-  fusion_method: "rrf" # rrf, weighted, score_normalized
-  alpha: 0.5 # Weight for dense retrieval
-```
+## 📚 Documentation
 
-## Testing
+| Document                                | Description                                              |
+| --------------------------------------- | -------------------------------------------------------- |
+| [HLD.md](docs/HLD.md)                   | High-Level Design with architecture and design decisions |
+| [LLD.md](docs/LLD.md)                   | Low-Level Design with class specifications               |
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Visual diagrams and flow charts                          |
+
+---
+
+## 🧪 Testing
 
 ```bash
-# Run all tests
 pytest tests/ -v
-
-# Run with coverage
 pytest tests/ --cov=src --cov-report=html
 ```
 
-## Production Deployment
+---
+
+## 🚀 Deployment
 
 ### Docker
 
 ```dockerfile
 FROM python:3.11-slim
-
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-
 COPY . .
-
-CMD ["python", "-m", "src.main", "--mode", "api", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["python", "-m", "src.main", "--mode", "api", "--host", "0.0.0.0"]
 ```
 
-### Systemd Service
+### Docker Compose
 
-```ini
-[Unit]
-Description=Modular RAG API
-After=network.target
+```yaml
+services:
+  ollama:
+    image: ollama/ollama
+    ports: ["11434:11434"]
 
-[Service]
-Type=simple
-User=ubuntu
-WorkingDirectory=/opt/modular_rag
-ExecStart=/usr/bin/python -m src.main --mode api --host 0.0.0.0 --port 8000
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
+  rag-api:
+    build: .
+    depends_on: [ollama]
+    environment:
+      OLLAMA_BASE_URL: http://ollama:11434
+    ports: ["8000:8000"]
 ```
 
-## Contributing
+---
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Run tests and linting
-5. Submit a pull request
+## 📄 License
 
-## License
+MIT License - see [LICENSE](LICENSE) for details.
 
-MIT License - see LICENSE file for details.
+---
 
-## Acknowledgments
+## 🙏 Acknowledgments
 
-- [LangChain](https://github.com/langchain-ai/langchain) for RAG abstractions
-- [LangGraph](https://github.com/langchain-ai/langgraph) for workflow orchestrationllama](https
-- [O://ollama.com/) for local LLM serving
+- [LangChain](https://github.com/langchain-ai/langchain) - RAG abstractions
+- [LangGraph](https://github.com/langchain-ai/langgraph) - Workflow orchestration
+- [Ollama](https://ollama.com/) - Local LLM serving
+- [ChromaDB](https://www.trychroma.com/) - Vector storage
