@@ -92,8 +92,6 @@ def run_api(host: str, port: int, reload: bool):
 def run_cli():
     """Run CLI mode with LangChain chains."""
     from src.components.orchestration.rag_graph import ModularRAGWorkflow
-    from langchain_core.prompts import PromptTemplate
-    from langchain.chains import LLMChain
     
     workflow = ModularRAGWorkflow()
     
@@ -117,7 +115,10 @@ def run_cli():
             if result.get('sources'):
                 print("\n📚 Sources:")
                 for i, source in enumerate(result['sources'][:3], 1):
-                    print(f"  {i}. {source.get('document_id', 'Unknown')}")
+                    doc_id = source.get('document_id', 'Unknown')
+                    chunk_idx = source.get('metadata', {}).get('chunk_index', '?')
+                    content_preview = source.get('content', '')[:60].replace('\n', ' ')
+                    print(f"  {i}. [{doc_id}] Chunk {chunk_idx}: \"{content_preview}...\"")
             
             if result.get('decomposed_queries'):
                 print(f"\n🔍 Sub-queries analyzed: {len(result['decomposed_queries'])}")

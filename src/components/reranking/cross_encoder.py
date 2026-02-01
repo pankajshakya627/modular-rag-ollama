@@ -8,6 +8,7 @@ import numpy as np
 
 from .base import BaseReranker, RerankedResult
 from ..retrieval.vector_store import SearchResult
+from ...utils.temporal_utils import extract_temporal_entities, calculate_temporal_score
 
 logger = logging.getLogger(__name__)
 
@@ -25,9 +26,19 @@ class CrossEncoderReranker(BaseReranker):
         self.model_name = model_name
         self.batch_size = batch_size
         
+        # Temporal scoring configuration
+        self.temporal_boost = 1.5  # Boost for matching dates
+        self.temporal_penalty = 0.7  # Penalty for mismatched dates
+        self.enable_temporal_scoring = True
+        
         # Set device
         if device is None:
-            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+            if torch.cuda.is_available():
+                self.device = "cuda"
+            elif torch.backends.mps.is_available():
+                self.device = "mps"
+            else:
+                self.device = "cpu"
         else:
             self.device = device
         
@@ -91,17 +102,35 @@ class CrossEncoderReranker(BaseReranker):
         results: List[SearchResult],
         top_k: Optional[int] = None,
     ) -> List[RerankedResult]:
-        """Rerank results using Cross-Encoder."""
+        """Rerank results using Cross-Encoder with temporal awareness."""
         if not results:
             return []
         
         top_k = top_k or len(results)
+        
+        # Extract temporal entities from query for temporal-aware reranking
+        query_temporal_entities = []
+        if self.enable_temporal_scoring:
+            query_temporal_entities = extract_temporal_entities(query)
+            if query_temporal_entities:
+                logger.info(f"Query temporal context: {[e.normalized for e in query_temporal_entities]}")
         
         reranked_results = []
         
         for result in results:
             # Score the pair
             score = self._score_pair(query, result.content)
+            
+            # Apply temporal scoring if enabled and query has temporal entities
+            if self.enable_temporal_scoring and query_temporal_entities:
+                doc_temporal_entities = extract_temporal_entities(result.content)
+                temporal_multiplier = calculate_temporal_score(
+                    query_temporal_entities,
+                    doc_temporal_entities,
+                    match_boost=self.temporal_boost,
+                    mismatch_penalty=self.temporal_penalty,
+                )
+                score = score * temporal_multiplier
             
             reranked = RerankedResult(
                 id=result.id,

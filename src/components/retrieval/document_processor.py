@@ -12,6 +12,13 @@ import logging
 # Direct import to avoid circular dependency
 from src.core.uuid_utils import generate_uuid  # UUID v7 for time-sorted IDs
 
+# Import metadata extractor - use try/except to handle circular import gracefully
+try:
+    from src.utils.metadata_extractor import DocumentMetadataExtractor
+    METADATA_EXTRACTION_AVAILABLE = True
+except ImportError:
+    METADATA_EXTRACTION_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -443,7 +450,25 @@ class DocumentProcessor:
         self.chunk_overlap = chunk_overlap
         self.embedding_wrapper = embedding_wrapper
         
+        # Metadata extraction settings
+        self.enable_metadata_extraction = True
+        self.enable_llm_metadata = False  # LLM extraction disabled by default (slower)
+        self.metadata_extractor = None
+        
         self._init_chunker()
+        self._init_metadata_extractor()
+    
+    def _init_metadata_extractor(self):
+        """Initialize metadata extractor if available."""
+        if METADATA_EXTRACTION_AVAILABLE and self.enable_metadata_extraction:
+            self.metadata_extractor = DocumentMetadataExtractor(
+                llm_wrapper=None,  # Will be set later if LLM extraction enabled
+                enable_llm_extraction=self.enable_llm_metadata,
+                enable_rule_extraction=True,
+            )
+            logger.info("Metadata extraction enabled")
+        else:
+            logger.info("Metadata extraction not available or disabled")
     
     def _init_chunker(self):
         """Initialize the appropriate chunker."""
@@ -491,6 +516,10 @@ class DocumentProcessor:
         # Chunk the text
         chunks = self.chunker.chunk(text, metadata)
         
+        # Extract and attach metadata to each chunk
+        if self.metadata_extractor and chunks:
+            chunks = self._enrich_chunks_with_metadata(chunks)
+        
         # Create document
         document = Document(
             id=doc_id,
@@ -500,8 +529,27 @@ class DocumentProcessor:
             source_type="text",
         )
         
-        logger.info(f"Processed text into {len(chunks)} chunks")
+        logger.info(f"Processed text into {len(chunks)} chunks (with metadata extraction: {self.metadata_extractor is not None})")
         return document
+    
+    def _enrich_chunks_with_metadata(self, chunks: List[DocumentChunk]) -> List[DocumentChunk]:
+        """Enrich chunks with extracted metadata."""
+        for chunk in chunks:
+            try:
+                # Extract metadata from chunk content
+                extracted = self.metadata_extractor.extract(
+                    chunk.content, 
+                    use_llm=self.enable_llm_metadata
+                )
+                
+                # Merge extracted metadata with existing metadata
+                extracted_dict = extracted.to_dict()
+                chunk.metadata.update(extracted_dict)
+                
+            except Exception as e:
+                logger.warning(f"Failed to extract metadata for chunk {chunk.id}: {e}")
+        
+        return chunks
     
     def process_file(
         self,

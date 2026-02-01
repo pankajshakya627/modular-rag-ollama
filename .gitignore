@@ -215,3 +215,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# RAG Data
+data/vector_store/
+data/documents/
+*.pdf

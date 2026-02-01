@@ -36,12 +36,10 @@ Hypothetical Answer:"""
         prompt = self.hypothesis_prompt.format(query=query)
         
         try:
-            response = self.llm_wrapper.llm.generate(
-                prompt,
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
-            )
-            return response.strip()
+            response = self.llm_wrapper.llm.invoke(prompt)
+            if hasattr(response, 'content'):
+                return response.content.strip()
+            return str(response).strip()
         except Exception as e:
             logger.error(f"Error generating hypothetical document: {e}")
             # Fallback: return the query itself

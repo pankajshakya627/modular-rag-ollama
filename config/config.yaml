@@ -55,6 +55,11 @@ reranking:
   colbert_max_tokens: 512
   top_k: 10
   batch_size: 32
+  # Temporal-aware reranking: boosts chunks with matching dates/quarters
+  temporal_boost:
+    enabled: true
+    match_boost: 1.5      # Multiplier for exact temporal match (e.g., Q2 2025)
+    mismatch_penalty: 0.7 # Multiplier for temporal mismatch (e.g., Q1 when asking for Q2)
 
 # HyDE Configuration
 hyde:
@@ -99,6 +104,14 @@ document_processing:
   chunk_overlap: 128
   separators: ["\n\n", "\n", ". ", "! ", "? ", "; ", " ", ""]
   length_function: "len"
+  # Metadata extraction during document ingestion
+  metadata_extraction:
+    enabled: true
+    rule_based: true          # Extract temporal, financial, entity metadata (fast)
+    llm_based: false          # Extract semantic topics, summary (slower, more accurate)
+    extract_temporal: true    # Quarters, years, dates
+    extract_financial: true   # Currency, percentages, metrics
+    extract_entities: true    # Companies, products
 
 # Granularity-Aware Retrieval Configuration
 granularity_retrieval:

@@ -55,16 +55,24 @@ information to answer the question, say so clearly. Be concise and accurate."""
                     {"role": "system", "content": self.system_prompt},
                     {"role": "user", "content": prompt},
                 ]
-                answer = self.llm_wrapper.llm.generate_with_history(messages)
+                answer = self.llm_wrapper.generate_with_history(messages)
             else:
-                answer = self.llm_wrapper.llm.generate(prompt)
+                answer = self.llm_wrapper.generate(prompt)
             
-            # Prepare sources
+            # Prepare sources with deduplication
             source_list = []
+            seen_content_hashes = set()
             if sources:
                 for src in sources:
+                    # Deduplicate by content hash to avoid showing same chunk multiple times
+                    content_hash = hash(src.content[:200])
+                    if content_hash in seen_content_hashes:
+                        continue
+                    seen_content_hashes.add(content_hash)
+                    
                     source_list.append({
                         "id": src.id,
+                        "document_id": getattr(src, 'document_id', None) or src.metadata.get('source', 'Unknown'),
                         "content": src.content[:200] + "..." if len(src.content) > 200 else src.content,
                         "score": src.score,
                         "metadata": src.metadata,
@@ -224,7 +232,7 @@ Question: {query}
 Please provide a synthesized answer that combines information from all relevant sources:"""
         
         try:
-            answer = self.llm_wrapper.llm.generate(prompt, max_tokens=1024)
+            answer = self.llm_wrapper.generate(prompt, max_tokens=1024)
             
             return AnswerResult(
                 answer=answer.strip(),
@@ -265,7 +273,7 @@ Original Question: {query}
 Synthesized Answer:"""
         
         try:
-            answer = self.llm_wrapper.llm.generate(prompt, max_tokens=1024)
+            answer = self.llm_wrapper.generate(prompt, max_tokens=1024)
             
             all_sources = []
             for method, ans in answers.items():
@@ -322,7 +330,7 @@ Question: {query}
 Synthesized Answer:"""
         
         try:
-            answer = self.llm_wrapper.llm.generate(prompt, max_tokens=1024)
+            answer = self.llm_wrapper.generate(prompt, max_tokens=1024)
             
             return AnswerResult(
                 answer=answer.strip(),

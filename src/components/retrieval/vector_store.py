@@ -122,6 +122,7 @@ class LangChainChromaVectorStore(BaseVectorStore):
         for chunk in doc.chunks:
             metadata = {
                 **chunk.metadata,
+                "id": chunk.id,  # Store chunk ID in metadata for retrieval
                 "document_id": doc.id,
                 "chunk_index": chunk.chunk_index,
                 "source_type": doc.source_type,
@@ -159,21 +160,31 @@ class LangChainChromaVectorStore(BaseVectorStore):
         filters: Optional[Dict[str, Any]] = None,
     ) -> List[SearchResult]:
         """Search for similar documents using LangChain."""
-        # Perform search using LangChain
+        # Perform search using LangChain with scores
+        search_kwargs = {}
         if filters:
-            # LangChain Chroma doesn't support arbitrary filters directly
-            # We'd need to use the underlying Chroma client
-            results = self.vector_store.similarity_search(query, k=top_k)
-        else:
-            results = self.vector_store.similarity_search(query, k=top_k)
+             search_kwargs["filter"] = filters
+             
+        results_with_score = self.vector_store.similarity_search_with_score(
+            query, 
+            k=top_k,
+            **search_kwargs
+        )
         
         search_results = []
-        for doc in results:
-            # Get the score (LangChain doesn't return scores by default in similarity_search)
+        for doc, score in results_with_score:
+            # Convert Chroma distance to similarity score
+            # Chroma default is L2/Cosine distance (0 to 2 for Cosine)
+            # Simple approximation: 1 - distance (clamped)
+            similarity = max(0.0, 1.0 - score) if score <= 1.0 else 0.0
+            
+            # Retrieve ID from metadata (preferred) or generate/fallback
+            chunk_id = doc.metadata.get("id") or generate_uuid()
+            
             result = SearchResult(
-                id=doc.metadata.get("id", generate_uuid()),
+                id=str(chunk_id),
                 content=doc.page_content,
-                score=0.9,  # LangChain similarity_search doesn't return scores
+                score=float(similarity), 
                 metadata=doc.metadata,
                 document_id=doc.metadata.get("document_id"),
                 chunk_index=doc.metadata.get("chunk_index", 0),

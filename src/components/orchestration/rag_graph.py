@@ -132,9 +132,25 @@ class RAGGraph:
             num_clusters=config.raptor.num_clusters,
         )
         
-        # Reranker (using LLM-based)
-        from ..reranking.base import LLMEnsembleReranker
-        self.reranker = LLMEnsembleReranker(llm_wrapper=self.llm_wrapper)
+        # Reranker selection based on config
+        reranking_method = config.reranking.method
+        
+        if reranking_method == "colbert":
+            from ..reranking.colbert import ColBERTReranker
+            self.reranker = ColBERTReranker(
+                max_tokens=config.reranking.colbert_max_tokens,
+                batch_size=config.reranking.batch_size,
+            )
+        elif reranking_method == "cross_encoder":
+            from ..reranking.cross_encoder import CrossEncoderReranker
+            self.reranker = CrossEncoderReranker(
+                model_name=config.reranking.cross_encoder_model,
+                batch_size=config.reranking.batch_size,
+            )
+        else:
+            # Default to LLM Ensemble
+            from ..reranking.base import LLMEnsembleReranker
+            self.reranker = LLMEnsembleReranker(llm_wrapper=self.llm_wrapper)
         
         # Answer generator with LangChain
         self.answer_generator = AnswerGenerator(llm_wrapper=self.llm_wrapper)
@@ -281,22 +297,23 @@ Hypothetical Answer:""",
         
         return state
     
-    def _dense_retrieval(self, state: GraphState) -> GraphState:
+    def _dense_retrieval(self, state: GraphState) -> Dict[str, Any]:
         """Perform dense retrieval using LangChain vector store."""
         query = state["query"]
         
         try:
             results = self.vsm.search(query, top_k=20)
-            state["dense_results"] = results
-            state["workflow_stage"] = WorkflowStage.RETRIEVAL.value
+            return {
+                "dense_results": results,
+            }
         except Exception as e:
             logger.error(f"Error in dense retrieval: {e}")
-            state["errors"] = state.get("errors", []) + [f"dense_retrieval: {str(e)}"]
-            state["dense_results"] = []
-        
-        return state
+            return {
+                "errors": state.get("errors", []) + [f"dense_retrieval: {str(e)}"],
+                "dense_results": []
+            }
     
-    def _sparse_retrieval(self, state: GraphState) -> GraphState:
+    def _sparse_retrieval(self, state: GraphState) -> Dict[str, Any]:
         """Perform sparse (BM25) retrieval."""
         query = state["query"]
         
@@ -304,58 +321,64 @@ Hypothetical Answer:""",
             from ..retrieval.hybrid_search import BM25Searcher
             bm25 = BM25Searcher()
             all_docs = self.vsm.vector_store.get_all_documents()
+            results = []
             if all_docs:
                 bm25.build_index(all_docs)
                 results = bm25.search(query, top_k=20)
-                state["sparse_results"] = results
-            else:
-                state["sparse_results"] = []
-            state["workflow_stage"] = WorkflowStage.RETRIEVAL.value
+            
+            return {
+                "sparse_results": results,
+            }
         except Exception as e:
             logger.error(f"Error in sparse retrieval: {e}")
-            state["errors"] = state.get("errors", []) + [f"sparse_retrieval: {str(e)}"]
-            state["sparse_results"] = []
-        
-        return state
+            return {
+                "errors": state.get("errors", []) + [f"sparse_retrieval: {str(e)}"],
+                "sparse_results": []
+            }
     
-    def _hyde_retrieval(self, state: GraphState) -> GraphState:
+    def _hyde_retrieval(self, state: GraphState) -> Dict[str, Any]:
         """Perform HyDE retrieval using LangChain chain."""
         if not self.enable_hyde:
-            return state
+            return {}
         
         query = state["query"]
         
         try:
             # Generate hypothetical document using LCEL chain
-            hyde_result = self.hyde_chain.invoke({"query": query})
-            hyde_query = hyde_result.strip()
+            # Note: We don't save hyde_query to state to avoid conflicts if needed, 
+            # or we assume only this node writes it.
+            # But the loop in _combine_results reads from state["hyde_results"]
             
             # Use the hypothetical document for retrieval
-            results = self.hyde_retriever.retrieve(query, top_k=20)
-            state["hyde_results"] = results
+            results = self.hyde_retriever.retrieve(query, top_k=20, use_hyde=True)
+            return {
+                "hyde_results": results
+            }
         except Exception as e:
             logger.error(f"Error in HyDE retrieval: {e}")
-            state["errors"] = state.get("errors", []) + [f"hyde_retrieval: {str(e)}"]
-            state["hyde_results"] = []
-        
-        return state
+            return {
+                "errors": state.get("errors", []) + [f"hyde_retrieval: {str(e)}"],
+                "hyde_results": []
+            }
     
-    def _raptor_retrieval(self, state: GraphState) -> GraphState:
+    def _raptor_retrieval(self, state: GraphState) -> Dict[str, Any]:
         """Perform RAPTOR retrieval."""
         if not self.enable_raptor:
-            return state
+            return {}
         
         query = state["query"]
         
         try:
             results = self.raptor_retriever.retrieve(query, top_k=20)
-            state["raptor_results"] = results
+            return {
+                "raptor_results": results
+            }
         except Exception as e:
             logger.error(f"Error in RAPTOR retrieval: {e}")
-            state["errors"] = state.get("errors", []) + [f"raptor_retrieval: {str(e)}"]
-            state["raptor_results"] = []
-        
-        return state
+            return {
+                "errors": state.get("errors", []) + [f"raptor_retrieval: {str(e)}"],
+                "raptor_results": []
+            }
     
     def _combine_results(self, state: GraphState) -> GraphState:
         """Combine results from all retrieval methods."""
@@ -436,12 +459,19 @@ Hypothetical Answer:""",
         
         try:
             # Use reranked results if available, else combined results
-            results = state.get("reranked_results", state.get("combined_results", []))
-            
-            if results:
-                answer_result = self.answer_generator.generate_answer_from_results(
-                    query, results[:10]
+            # Use reranked results if available, else combined results
+            if state.get("reranked_results"):
+                answer_result = self.answer_generator.generate_answer_from_reranked(
+                    query, state["reranked_results"][:10]
                 )
+            elif state.get("combined_results"):
+                answer_result = self.answer_generator.generate_answer_from_results(
+                    query, state["combined_results"][:10]
+                )
+            else:
+                answer_result = None
+            
+            if answer_result:
                 state["answer"] = answer_result.answer
                 state["answer_result"] = answer_result
                 state["confidence"] = answer_result.confidence
@@ -567,6 +597,42 @@ class ModularRAGWorkflow:
     def index_documents(self, documents: List[Any]) -> None:
         """Index documents for retrieval using LangChain."""
         pass  # Would need to integrate with document processor
+
+    def stream(self, question: str):
+        """Stream the LangGraph RAG workflow."""
+        if self.rag_graph is None:
+            self._init_workflow()
+            
+        initial_state = {
+            "query": question,
+            "chat_history": [],
+            "original_query": question,
+            "decomposed_queries": [],
+            "stepback_query": None,
+            "hyde_query": None,
+            "dense_results": [],
+            "sparse_results": [],
+            "hyde_results": [],
+            "raptor_results": [],
+            "combined_results": [],
+            "reranked_results": [],
+            "answer": "",
+            "answer_result": None,
+            "workflow_stage": "",
+            "errors": [],
+            "confidence": 0.0,
+            "sources": [],
+        }
+        
+        # Stream state updates
+        config = {"configurable": {"thread_id": generate_uuid()}}
+        
+        try:
+            for state in self.rag_graph.graph.stream(initial_state, config=config):
+                yield state
+        except Exception as e:
+            logger.error(f"Error steaming workflow: {e}")
+            yield {"error": str(e)}
     
     def get_status(self) -> Dict[str, Any]:
         """Get the workflow status."""

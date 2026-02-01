@@ -3,7 +3,7 @@ import time
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from langchain_core.callbacks import BaseCallbackHandler
@@ -210,6 +210,98 @@ async def query(request: QueryRequest):
     except Exception as e:
         logger.error(f"Error processing query with LangGraph: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+# WebSocket Query endpoint
+@app.websocket("/ws/query")
+async def websocket_query(websocket: WebSocket):
+    """WebSocket endpoint for streaming RAG queries."""
+    await websocket.accept()
+    
+    try:
+        while True:
+            # Receive query
+            data = await websocket.receive_json()
+            query_text = data.get("query")
+            
+            if not query_text:
+                await websocket.send_json({"error": "No query provided"})
+                continue
+            
+            if _rag_workflow is None:
+                await websocket.send_json({"error": "RAG pipeline not initialized"})
+                continue
+
+            # Stream updates
+            # Determine stages based on state keys present
+            # LangGraph emits the state of the node that just finished
+            
+            await websocket.send_json({
+                "type": "status", 
+                "stage": "started", 
+                "message": f"Processing query: {query_text}"
+            })
+            
+            try:
+                for state in _rag_workflow.stream(query_text):
+                    # Identify which node finished by checking keys
+                    # This is schematic; actual keys depend on how LangGraph returns state
+                    # state is usually a dict like {'query_analysis': {...}} or just the state dict
+                    
+                    # Heuristic for stage detection
+                    stage = "processing"
+                    details = {}
+                    
+                    # If state is a dict of node_name -> node_output (LangGraph standard)
+                    for node_name, node_state in state.items():
+                        if node_name == "query_analysis":
+                            stage = "retrieval_started"
+                            details = {
+                                "decomposed": node_state.get("decomposed_queries", []),
+                                "hyde": node_state.get("hyde_query")
+                            }
+                        elif node_name in ["dense_retrieval", "sparse_retrieval", "hyde_retrieval", "raptor_retrieval"]:
+                            stage = "retrieving"
+                            details = {"source": node_name}
+                        elif node_name == "combine_results":
+                            stage = "reranking_started"
+                            count = len(node_state.get("combined_results", []))
+                            details = {"retrieved_count": count}
+                        elif node_name == "rerank":
+                            stage = "generating"
+                            count = len(node_state.get("reranked_results", []))
+                            details = {"top_k": count}
+                        elif node_name == "generate_answer":
+                            stage = "completed"
+                            answer = node_state.get("answer", "")
+                            sources = node_state.get("sources", [])
+                            await websocket.send_json({
+                                "type": "result",
+                                "answer": answer,
+                                "sources": sources,
+                                "confidence": node_state.get("confidence", 0.0)
+                            })
+                            return # End stream for this query
+
+                    # Send intermediate status
+                    if stage != "completed":
+                        await websocket.send_json({
+                            "type": "status",
+                            "stage": stage,
+                            "details": details
+                        })
+                        
+            except Exception as e:
+                logger.error(f"Streaming error: {e}")
+                await websocket.send_json({"type": "error", "message": str(e)})
+
+    except WebSocketDisconnect:
+        logger.info("WebSocket disconnected")
+    except Exception as e:
+        logger.error(f"WebSocket error: {e}")
+        try:
+            await websocket.close(code=1011)
+        except:
+            pass
 
 
 # Index endpoint
