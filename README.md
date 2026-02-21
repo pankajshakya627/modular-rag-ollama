@@ -28,8 +28,8 @@ Most RAG implementations use a simple pattern that **fails in production**:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                        FastAPI Layer                         │
-│                    POST /query | WS /ws/query                │
+│                        FastAPI Layer                        │
+│                    POST /query | WS /ws/query               │
 └──────────────────────────┬──────────────────────────────────┘
                            │
                            ▼
