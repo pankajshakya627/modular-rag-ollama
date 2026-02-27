@@ -228,6 +228,8 @@ Hybrid search combines dense (semantic) and sparse (keyword) retrieval to levera
 ```
 RRF(d) = Σᵣ∈R [1 / (k + rankᵣ(d))]
 
+$$RRF(d) = \sum_{r \in R} \frac{1}{k + rank_r(d)}$$
+
 Where:
 - d = Document
 - R = Set of rankers (e.g., {dense, sparse})

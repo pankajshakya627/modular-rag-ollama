@@ -3,6 +3,8 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, TypedDict
 import logging
 from enum import Enum
+import operator
+from typing import Annotated
 
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.memory import MemorySaver
@@ -62,7 +64,7 @@ class GraphState(TypedDict):
     
     # Metadata
     workflow_stage: str
-    errors: List[str]
+    errors: Annotated[List[str], operator.add]
     confidence: float
     sources: List[Dict[str, Any]]
 
@@ -111,17 +113,17 @@ class RAGGraph:
             embedding_wrapper=self.embedding_wrapper,
         )
         
-        # Hybrid search
+        # Hybrid search (now uses LangChain EnsembleRetriever internally)
         self.hybrid_searcher = HybridSearcher(
-            vector_store_manager=self.vsm,
-            alpha=config.hybrid_search.alpha,
-            top_k=config.hybrid_search.top_k,
+            dense_weight=config.hybrid_search.alpha,
+            sparse_weight=1.0 - config.hybrid_search.alpha,
         )
         
-        # HyDE retriever
+        # HyDE retriever (now uses LangChain HypotheticalDocumentEmbedder)
         self.hyde_retriever = HyDERetriever(
-            vector_store_manager=self.vsm,
-            llm_wrapper=self.llm_wrapper,
+            llm=self.llm_wrapper,
+            embeddings=self.embedding_wrapper,
+            vector_store=self.vector_store.vector_store if hasattr(self.vector_store, 'vector_store') else None,
         )
         
         # RAPTOR retriever
@@ -145,7 +147,7 @@ class RAGGraph:
             from ..reranking.cross_encoder import CrossEncoderReranker
             self.reranker = CrossEncoderReranker(
                 model_name=config.reranking.cross_encoder_model,
-                batch_size=config.reranking.batch_size,
+                top_n=config.reranking.top_k if hasattr(config.reranking, 'top_k') else 10,
             )
         else:
             # Default to LLM Ensemble
@@ -175,7 +177,7 @@ Sub-questions (one per line):""",
             input_variables=["query", "max_sub_questions"],
         )
         # LCEL chain: prompt | llm | parser
-        self.decomposition_chain = self.decomposition_prompt | self.llm_wrapper.llm | self.output_parser
+        self.decomposition_chain = self.decomposition_prompt | self.llm_wrapper | self.output_parser
         
         # Step-back chain using LCEL pattern
         self.stepback_prompt = PromptTemplate(
@@ -187,7 +189,7 @@ Original Question: {query}
 Step-back Question:""",
             input_variables=["query"],
         )
-        self.stepback_chain = self.stepback_prompt | self.llm_wrapper.llm | self.output_parser
+        self.stepback_chain = self.stepback_prompt | self.llm_wrapper | self.output_parser
         
         # HyDE chain using LCEL pattern
         self.hyde_prompt = PromptTemplate(
@@ -199,7 +201,7 @@ Question: {query}
 Hypothetical Answer:""",
             input_variables=["query"],
         )
-        self.hyde_chain = self.hyde_prompt | self.llm_wrapper.llm | self.output_parser
+        self.hyde_chain = self.hyde_prompt | self.llm_wrapper | self.output_parser
     
     def _build_graph(self) -> StateGraph:
         """Build the LangGraph workflow."""
@@ -323,7 +325,17 @@ Hypothetical Answer:""",
             all_docs = self.vsm.vector_store.get_all_documents()
             results = []
             if all_docs:
-                bm25.build_index(all_docs)
+                texts = []
+                metas = []
+                for doc in all_docs:
+                    if hasattr(doc, 'chunks') and doc.chunks:
+                        for chunk in doc.chunks:
+                            texts.append(chunk.content)
+                            metas.append(chunk.metadata)
+                    elif hasattr(doc, 'page_content'):
+                        texts.append(doc.page_content)
+                        metas.append(doc.metadata)
+                bm25.index(texts, metadatas=metas)
                 results = bm25.search(query, top_k=20)
             
             return {
@@ -350,7 +362,7 @@ Hypothetical Answer:""",
             # But the loop in _combine_results reads from state["hyde_results"]
             
             # Use the hypothetical document for retrieval
-            results = self.hyde_retriever.retrieve(query, top_k=20, use_hyde=True)
+            results = self.hyde_retriever.retrieve(query, top_k=20)
             return {
                 "hyde_results": results
             }
@@ -385,40 +397,52 @@ Hypothetical Answer:""",
         try:
             all_results = []
             
+            # Helper to convert to dict
+            def _to_dict(item):
+                if hasattr(item, 'to_dict'):
+                    return item.to_dict()
+                elif hasattr(item, 'page_content'):
+                    return {"content": item.page_content, "metadata": item.metadata, "score": item.metadata.get("score", 0.0), "id": item.metadata.get("id", str(hash(item.page_content)))}
+                return item  # already a dict
+
             # Add dense results
             for r in state.get("dense_results", []):
-                all_results.append({**r.to_dict(), "source": "dense"})
+                all_results.append({**_to_dict(r), "source": "dense"})
             
             # Add sparse results
             for r in state.get("sparse_results", []):
-                all_results.append({**r.to_dict(), "source": "sparse"})
+                all_results.append({**_to_dict(r), "source": "sparse"})
             
             # Add HyDE results
             for r in state.get("hyde_results", []):
-                all_results.append({**r.to_dict(), "source": "hyde"})
+                all_results.append({**_to_dict(r), "source": "hyde"})
             
             # Add RAPTOR results
             for r in state.get("raptor_results", []):
-                all_results.append({**r.to_dict(), "source": "raptor"})
+                all_results.append({**_to_dict(r), "source": "raptor"})
             
             # Deduplicate by ID
             seen = set()
             unique_results = []
             for r in all_results:
-                if r["id"] not in seen:
-                    seen.add(r["id"])
+                # Safely get an ID, fallback to hashing content
+                doc_id = r.get("id") or r.get("metadata", {}).get("id") or str(hash(r.get("content", "")))
+                r["id"] = doc_id  # Ensure it exists for SearchResult
+                
+                if doc_id not in seen:
+                    seen.add(doc_id)
                     unique_results.append(r)
             
             # Sort by score
-            unique_results.sort(key=lambda x: x["score"], reverse=True)
+            unique_results.sort(key=lambda x: x.get("score", 0.0), reverse=True)
             
             # Convert back to SearchResult objects
             combined = []
             for r in unique_results[:50]:
                 combined.append(SearchResult(
                     id=r["id"],
-                    content=r["content"],
-                    score=r["score"],
+                    content=r.get("content", ""),
+                    score=r.get("score", 0.0),
                     metadata=r.get("metadata", {}),
                     document_id=r.get("document_id"),
                     chunk_index=r.get("chunk_index", 0),
@@ -454,19 +478,28 @@ Hypothetical Answer:""",
         return state
     
     def _generate_answer(self, state: GraphState) -> GraphState:
-        """Generate the final answer."""
+        """Generate the final answer using LangChain chain."""
         query = state["query"]
         
         try:
             # Use reranked results if available, else combined results
-            # Use reranked results if available, else combined results
             if state.get("reranked_results"):
-                answer_result = self.answer_generator.generate_answer_from_reranked(
-                    query, state["reranked_results"][:10]
+                results = state["reranked_results"][:10]
+                result_dicts = [
+                    {"content": r.content, "id": r.id, "score": r.reranked_score, "metadata": r.metadata}
+                    for r in results
+                ]
+                answer_result = self.answer_generator.generate_answer_from_results(
+                    query, result_dicts
                 )
             elif state.get("combined_results"):
+                results = state["combined_results"][:10]
+                result_dicts = [
+                    {"content": r.content, "id": r.id, "score": r.score, "metadata": r.metadata}
+                    for r in results
+                ]
                 answer_result = self.answer_generator.generate_answer_from_results(
-                    query, state["combined_results"][:10]
+                    query, result_dicts
                 )
             else:
                 answer_result = None

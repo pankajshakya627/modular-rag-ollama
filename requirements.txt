@@ -6,6 +6,8 @@ langchain
 langchain-community
 langchain-core
 langchain-ollama
+langchain-text-splitters
+langchain-experimental
 langgraph
 
 # LLM and Embedding - compatible versions

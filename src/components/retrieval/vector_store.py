@@ -100,8 +100,8 @@ class LangChainChromaVectorStore(BaseVectorStore):
         else:
             self.embedding_wrapper = embedding_wrapper
         
-        # Create LangChain embedding function
-        self.embedding_function = self.embedding_wrapper.embedding
+        # Use LangChain embedding function directly
+        self.embedding_function = self.embedding_wrapper
         
         # Ensure directory exists
         Path(persist_directory).mkdir(parents=True, exist_ok=True)
@@ -371,7 +371,7 @@ class VectorStoreManager:
             logger.info(f"Generating embeddings for {len(all_contents)} chunks...")
         
         # Generate embeddings in batches
-        embeddings = self.embedding_wrapper.embed_texts(all_contents)
+        embeddings = self.embedding_wrapper.embed_documents(all_contents)
         
         # Assign embeddings to chunks
         idx = 0

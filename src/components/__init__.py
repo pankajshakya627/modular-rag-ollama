@@ -1,9 +1,8 @@
-"""Components package for Modular RAG."""
+"""Components package for Modular RAG using LangChain."""
 from .retrieval import (
     DocumentProcessor,
     ChunkingStrategy,
     RecursiveChunker,
-    SemanticChunker,
     VectorStoreManager,
     HybridSearcher,
     BM25Searcher,
@@ -30,7 +29,6 @@ __all__ = [
     'DocumentProcessor',
     'ChunkingStrategy',
     'RecursiveChunker',
-    'SemanticChunker',
     'VectorStoreManager',
     'HybridSearcher',
     'BM25Searcher',

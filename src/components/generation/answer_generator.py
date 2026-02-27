@@ -1,11 +1,18 @@
-"""Answer generation and response synthesis components."""
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
-import logging
+"""Answer generation using LangChain chains for Modular RAG.
 
-from ..retrieval.vector_store import SearchResult
-from ..reranking.base import RerankedResult
-from ...core.llm import LLMWrapper
+Replaces custom AnswerGenerator and ResponseSynthesizer with:
+- langchain.chains.combine_documents.create_stuff_documents_chain
+- LangChain LCEL (prompt | llm | parser) for flexible composition
+"""
+import logging
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional
+
+from langchain_core.prompts import ChatPromptTemplate, PromptTemplate
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.documents import Document as LangChainDocument
+from langchain_core.language_models import BaseChatModel
+from langchain_classic.chains.combine_documents import create_stuff_documents_chain
 
 logger = logging.getLogger(__name__)
 
@@ -19,325 +26,260 @@ class AnswerResult:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
+# ============================================================================
+# Prompt Templates
+# ============================================================================
+
+RAG_PROMPT = ChatPromptTemplate.from_messages([
+    ("system", """You are a helpful assistant. Use ONLY the provided context to answer the question.
+If the context does not contain enough information, say so clearly.
+Be precise and cite specific details from the context."""),
+    ("human", """Context:
+{context}
+
+Question: {input}
+
+Answer:"""),
+])
+
+SYNTHESIS_MERGE_PROMPT = ChatPromptTemplate.from_messages([
+    ("system", """You are synthesizing multiple answers into one coherent response.
+Combine the key information from all answers, resolve any contradictions, and provide
+a comprehensive yet concise final answer."""),
+    ("human", """Here are the individual answers to combine:
+
+{context}
+
+Original Question: {input}
+
+Synthesized Answer:"""),
+])
+
+CONFIDENCE_PROMPT = ChatPromptTemplate.from_messages([
+    ("system", "You are a confidence scorer. Rate how well the answer addresses the question on a scale 0.0 to 1.0."),
+    ("human", """Question: {question}
+Answer: {answer}
+Context Available: {has_context}
+
+Score (just the number, 0.0 to 1.0):"""),
+])
+
+
+# ============================================================================
+# Main Answer Generator using LangChain chains
+# ============================================================================
+
 class AnswerGenerator:
-    """Generates answers using retrieved context."""
+    """Answer generator using LangChain's create_stuff_documents_chain.
+    
+    Uses LangChain built-in document stuffing chain instead of custom
+    prompt building and generation logic.
+    """
     
     def __init__(
         self,
-        llm_wrapper: Optional[LLMWrapper] = None,
-        system_prompt: Optional[str] = None,
+        llm: Optional[BaseChatModel] = None,
+        prompt: Optional[ChatPromptTemplate] = None,
+        llm_wrapper=None,  # Backward compatibility parameter
     ):
-        """Initialize the answer generator."""
-        self.llm_wrapper = llm_wrapper or LLMWrapper()
-        self.system_prompt = system_prompt or self._default_system_prompt()
-    
-    def _default_system_prompt(self) -> str:
-        """Get the default system prompt."""
-        return """You are a helpful assistant that answers questions based on the provided context.
-Always cite your sources when making claims. If the context doesn't contain enough 
-information to answer the question, say so clearly. Be concise and accurate."""
+        """Initialize the answer generator.
+        
+        Args:
+            llm: LangChain chat model (e.g., ChatOllama)
+            prompt: Optional custom prompt template
+            llm_wrapper: Deprecated, kept for backward compatibility
+        """
+        if llm is None:
+            if llm_wrapper is not None:
+                # Backward compat: llm_wrapper is now just ChatOllama
+                self.llm = llm_wrapper
+            else:
+                from src.core.llm import get_llm
+                self.llm = get_llm()
+        else:
+            self.llm = llm
+        
+        self.prompt = prompt or RAG_PROMPT
+        
+        # Create the LangChain stuff documents chain
+        self._chain = create_stuff_documents_chain(
+            llm=self.llm,
+            prompt=self.prompt,
+        )
+        
+        logger.info("Initialized AnswerGenerator with LangChain create_stuff_documents_chain")
     
     def generate_answer(
         self,
         query: str,
-        context: str,
-        sources: Optional[List[SearchResult]] = None,
-        max_length: Optional[int] = None,
+        context_docs: List[LangChainDocument],
     ) -> AnswerResult:
-        """Generate an answer given a query and context."""
-        # Build the prompt
-        prompt = self._build_prompt(query, context)
+        """Generate an answer from retrieved documents using LangChain chain.
         
-        # Generate answer
+        Args:
+            query: The user's question
+            context_docs: List of LangChain Document objects as context
+            
+        Returns:
+            AnswerResult with the generated answer
+        """
+        if not context_docs:
+            return AnswerResult(
+                answer="I don't have enough context to answer this question.",
+                confidence=0.0,
+            )
+        
         try:
-            if self.system_prompt:
-                messages = [
-                    {"role": "system", "content": self.system_prompt},
-                    {"role": "user", "content": prompt},
-                ]
-                answer = self.llm_wrapper.generate_with_history(messages)
-            else:
-                answer = self.llm_wrapper.generate(prompt)
+            # Use the LangChain stuff documents chain
+            answer = self._chain.invoke({
+                "input": query,
+                "context": context_docs,
+            })
             
-            # Prepare sources with deduplication
-            source_list = []
-            seen_content_hashes = set()
-            if sources:
-                for src in sources:
-                    # Deduplicate by content hash to avoid showing same chunk multiple times
-                    content_hash = hash(src.content[:200])
-                    if content_hash in seen_content_hashes:
-                        continue
-                    seen_content_hashes.add(content_hash)
-                    
-                    source_list.append({
-                        "id": src.id,
-                        "document_id": getattr(src, 'document_id', None) or src.metadata.get('source', 'Unknown'),
-                        "content": src.content[:200] + "..." if len(src.content) > 200 else src.content,
-                        "score": src.score,
-                        "metadata": src.metadata,
-                    })
+            # Build sources from documents
+            sources = [
+                {
+                    "content": doc.page_content[:200],
+                    "metadata": doc.metadata,
+                    "id": doc.metadata.get("id", ""),
+                    "score": doc.metadata.get("score", 0.0),
+                }
+                for doc in context_docs
+            ]
             
-            # Estimate confidence based on answer length and structure
-            confidence = self._estimate_confidence(answer, context)
+            # Estimate confidence
+            confidence = self._estimate_confidence(query, answer, bool(context_docs))
             
             return AnswerResult(
-                answer=answer.strip(),
-                sources=source_list,
+                answer=answer,
+                sources=sources,
                 confidence=confidence,
-                metadata={
-                    "query": query,
-                    "context_length": len(context),
-                    "num_sources": len(sources) if sources else 0,
-                }
             )
             
         except Exception as e:
             logger.error(f"Error generating answer: {e}")
             return AnswerResult(
-                answer="I apologize, but I encountered an error while generating the answer.",
+                answer=f"Error generating answer: {str(e)}",
                 confidence=0.0,
-                metadata={"error": str(e)}
             )
-    
-    def _build_prompt(self, query: str, context: str) -> str:
-        """Build the prompt for answer generation."""
-        return f"""Based on the following context, please answer the question.
-
-Context:
-{context}
-
-Question: {query}
-
-Answer:"""
-    
-    def _estimate_confidence(self, answer: str, context: str) -> float:
-        """Estimate confidence based on answer characteristics."""
-        # Basic heuristics
-        confidence = 0.5
-        
-        # Longer answers tend to be more confident
-        if len(answer) > 100:
-            confidence += 0.2
-        if len(answer) > 300:
-            confidence += 0.1
-        
-        # Check for uncertainty markers
-        uncertainty_markers = ["I don't know", "not sure", "uncertain", "might be", "possibly"]
-        for marker in uncertainty_markers:
-            if marker.lower() in answer.lower():
-                confidence -= 0.1
-        
-        # Check for direct answers
-        if "based on the context" in answer.lower():
-            confidence += 0.1
-        
-        # Clamp to [0, 1]
-        return max(0.0, min(1.0, confidence))
     
     def generate_answer_from_results(
         self,
         query: str,
-        results: List[SearchResult],
-        max_context_length: int = 4000,
+        results: List[Dict[str, Any]],
     ) -> AnswerResult:
-        """Generate an answer from search results."""
-        # Build context from results
-        context_parts = []
-        total_length = 0
+        """Generate answer from search result dicts (backward compat).
         
-        for result in results:
-            if total_length + len(result.content) > max_context_length:
-                break
-            context_parts.append(result.content)
-            total_length += len(result.content)
-        
-        context = "\n\n".join(context_parts)
-        
-        return self.generate_answer(query, context, sources=results)
-    
-    def generate_answer_from_reranked(
-        self,
-        query: str,
-        results: List[RerankedResult],
-        max_context_length: int = 4000,
-    ) -> AnswerResult:
-        """Generate an answer from reranked results."""
-        # Convert to SearchResult-like format
-        search_results = [
-            SearchResult(
-                id=r.id,
-                content=r.content,
-                score=r.reranked_score,
-                metadata=r.metadata,
-                document_id=r.document_id,
-                chunk_index=r.chunk_index,
+        Args:
+            query: The user's question
+            results: List of search result dicts with 'content' key
+        """
+        # Convert dicts to LangChain Documents
+        context_docs = [
+            LangChainDocument(
+                page_content=r.get("content", ""),
+                metadata={
+                    "id": r.get("id", ""),
+                    "score": r.get("score", 0.0),
+                    **(r.get("metadata", {})),
+                },
             )
             for r in results
         ]
+        return self.generate_answer(query, context_docs)
+    
+    def _estimate_confidence(self, query: str, answer: str, has_context: bool) -> float:
+        """Estimate confidence score for the answer."""
+        try:
+            chain = CONFIDENCE_PROMPT | self.llm | StrOutputParser()
+            result = chain.invoke({
+                "question": query,
+                "answer": answer[:500],
+                "has_context": str(has_context),
+            })
+            
+            import re
+            score_match = re.search(r'(\d+\.?\d*)', result)
+            if score_match:
+                score = float(score_match.group(1))
+                return max(0.0, min(1.0, score))
+        except Exception as e:
+            logger.debug(f"Confidence estimation failed: {e}")
         
-        return self.generate_answer_from_results(query, search_results, max_context_length)
+        return 0.5 if has_context else 0.2
 
+
+# ============================================================================
+# Response Synthesizer using LangChain chains
+# ============================================================================
 
 class ResponseSynthesizer:
-    """Synthesizes comprehensive responses from multiple retrieval passes."""
+    """Synthesize multiple answers using LangChain chains.
     
-    def __init__(self, llm_wrapper: Optional[LLMWrapper] = None):
-        """Initialize the response synthesizer."""
-        self.llm_wrapper = llm_wrapper or LLMWrapper()
+    Replaces custom synthesis logic with LangChain document chains.
+    """
+    
+    def __init__(
+        self,
+        llm: Optional[BaseChatModel] = None,
+        llm_wrapper=None,  # Backward compatibility
+    ):
+        if llm is None:
+            if llm_wrapper is not None:
+                self.llm = llm_wrapper
+            else:
+                from src.core.llm import get_llm
+                self.llm = get_llm()
+        else:
+            self.llm = llm
     
     def synthesize(
         self,
         query: str,
-        retrieval_results: Dict[str, List[SearchResult]],
-        synthesis_strategy: str = "concatenate",
-    ) -> AnswerResult:
-        """Synthesize a response from multiple retrieval methods."""
-        if synthesis_strategy == "concatenate":
-            return self._synthesize_concat(query, retrieval_results)
-        elif synthesis_strategy == "merge":
-            return self._synthesize_merge(query, retrieval_results)
-        elif synthesis_strategy == "selective":
-            return self._synthesize_selective(query, retrieval_results)
+        answers: List[str],
+        strategy: str = "merge",
+    ) -> str:
+        """Synthesize multiple answers into one.
+        
+        Args:
+            query: Original question
+            answers: List of individual answers
+            strategy: Synthesis strategy ('merge', 'best', 'concatenate')
+            
+        Returns:
+            Synthesized answer
+        """
+        if not answers:
+            return "No answers to synthesize."
+        
+        if len(answers) == 1:
+            return answers[0]
+        
+        if strategy == "concatenate":
+            return "\n\n".join(answers)
+        
+        elif strategy == "best":
+            return answers[0]
+        
+        elif strategy == "merge":
+            # Use LangChain stuff chain to merge answers
+            answer_docs = [
+                LangChainDocument(
+                    page_content=f"Answer {i+1}: {answer}",
+                    metadata={"answer_index": i},
+                )
+                for i, answer in enumerate(answers)
+            ]
+            
+            merge_chain = create_stuff_documents_chain(
+                llm=self.llm,
+                prompt=SYNTHESIS_MERGE_PROMPT,
+            )
+            
+            return merge_chain.invoke({
+                "input": query,
+                "context": answer_docs,
+            })
+        
         else:
-            return self._synthesize_concat(query, retrieval_results)
-    
-    def _synthesize_concat(
-        self,
-        query: str,
-        retrieval_results: Dict[str, List[SearchResult]],
-    ) -> AnswerResult:
-        """Concatenate results from all methods and synthesize."""
-        all_content = []
-        all_sources = []
-        
-        for method, results in retrieval_results.items():
-            for result in results:
-                all_content.append(f"[{method}] {result.content}")
-                all_sources.append({
-                    **result.to_dict(),
-                    "retrieval_method": method,
-                })
-        
-        context = "\n\n".join(all_content[:10])  # Limit to top 10
-        
-        prompt = f"""Synthesize a comprehensive answer from multiple retrieval sources.
-Different retrieval methods may have found different relevant passages.
-
-Sources:
-{context}
-
-Question: {query}
-
-Please provide a synthesized answer that combines information from all relevant sources:"""
-        
-        try:
-            answer = self.llm_wrapper.generate(prompt, max_tokens=1024)
-            
-            return AnswerResult(
-                answer=answer.strip(),
-                sources=all_sources[:10],
-                confidence=0.7,
-                metadata={"synthesis_strategy": "concatenate", "methods_used": list(retrieval_results.keys())}
-            )
-        except Exception as e:
-            logger.error(f"Error synthesizing response: {e}")
-            return AnswerResult(answer="Error synthesizing response", confidence=0.0)
-    
-    def _synthesize_merge(
-        self,
-        query: str,
-        retrieval_results: Dict[str, List[SearchResult]],
-    ) -> AnswerResult:
-        """Merge answers from each method then synthesize."""
-        # Get answers from each method
-        answers = {}
-        for method, results in retrieval_results.items():
-            if results:
-                generator = AnswerGenerator(self.llm_wrapper)
-                answers[method] = generator.generate_answer_from_results(query, results[:3])
-        
-        # Synthesize final answer
-        combined_answers = "\n\n".join([
-            f"Method: {method}\nAnswer: {ans.answer}"
-            for method, ans in answers.items()
-        ])
-        
-        prompt = f"""Given the following answers from different retrieval methods,
-synthesize a single comprehensive answer.
-
-{combined_answers}
-
-Original Question: {query}
-
-Synthesized Answer:"""
-        
-        try:
-            answer = self.llm_wrapper.generate(prompt, max_tokens=1024)
-            
-            all_sources = []
-            for method, ans in answers.items():
-                all_sources.extend(ans.sources)
-            
-            return AnswerResult(
-                answer=answer.strip(),
-                sources=all_sources[:10],
-                confidence=0.75,
-                metadata={"synthesis_strategy": "merge", "methods_used": list(retrieval_results.keys())}
-            )
-        except Exception as e:
-            logger.error(f"Error synthesizing response: {e}")
-            return AnswerResult(answer="Error synthesizing response", confidence=0.0)
-    
-    def _synthesize_selective(
-        self,
-        query: str,
-        retrieval_results: Dict[str, List[SearchResult]],
-    ) -> AnswerResult:
-        """Select best results from each method and synthesize."""
-        # Take top result from each method
-        selected_results = {}
-        for method, results in retrieval_results.items():
-            if results:
-                # Sort by score and take top
-                sorted_results = sorted(results, key=lambda x: x.score, reverse=True)
-                selected_results[method] = sorted_results[:2]
-        
-        # Flatten and sort by score
-        all_results = []
-        for method, results in selected_results.items():
-            for result in results:
-                all_results.append({
-                    **result.to_dict(),
-                    "retrieval_method": method,
-                })
-        
-        all_results.sort(key=lambda x: x["score"], reverse=True)
-        
-        # Build context from top results
-        context_parts = [
-            f"[{r['retrieval_method']}] {r['content']}"
-            for r in all_results[:5]
-        ]
-        context = "\n\n".join(context_parts)
-        
-        prompt = f"""Synthesize an answer from the most relevant passages.
-
-{context}
-
-Question: {query}
-
-Synthesized Answer:"""
-        
-        try:
-            answer = self.llm_wrapper.generate(prompt, max_tokens=1024)
-            
-            return AnswerResult(
-                answer=answer.strip(),
-                sources=all_results[:5],
-                confidence=0.8,
-                metadata={"synthesis_strategy": "selective", "methods_used": list(selected_results.keys())}
-            )
-        except Exception as e:
-            logger.error(f"Error synthesizing response: {e}")
-            return AnswerResult(answer="Error synthesizing response", confidence=0.0)
+            return "\n\n".join(answers)

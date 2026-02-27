@@ -1,14 +1,12 @@
-"""Modular RAG - Production Ready RAG System.
+"""Modular RAG - Production Ready RAG System using LangChain and LangGraph.
 
 A modular, production-ready Retrieval-Augmented Generation system
-with support for HyDE, RAPTOR, hybrid search, and LangGraph orchestration.
-
-Features:
-- Modular architecture with reusable components
-- Hybrid search (BM25 + Dense Vectors)
-- HyDE (Hypothetical Document Embeddings)
+built on LangChain and LangGraph with:
+- Hybrid search (BM25Retriever + EnsembleRetriever with RRF)
+- HyDE (HypotheticalDocumentEmbedder)
 - RAPTOR (Recursive Abstractive Processing)
-- Multiple reranking methods (ColBERT, Cross-Encoder)
+- Cross-encoder reranking (CrossEncoderReranker + ContextualCompressionRetriever)
+- ColBERT reranking (custom late-interaction)
 - LangGraph-based workflow orchestration
 - FastAPI endpoints
 - Comprehensive evaluation metrics
@@ -28,8 +26,11 @@ from .core import (
     get_config,
     Config,
     ConfigLoader,
+    get_llm,
+    create_llm,
     LLMWrapper,
-    OllamaLLM,
+    get_embedding,
+    create_embedding,
     EmbeddingWrapper,
     OllamaEmbedding,
 )
@@ -38,7 +39,6 @@ from .components import (
     DocumentProcessor,
     ChunkingStrategy,
     RecursiveChunker,
-    SemanticChunker,
     VectorStoreManager,
     HybridSearcher,
     BM25Searcher,
@@ -72,8 +72,11 @@ __all__ = [
     'get_config',
     'Config',
     'ConfigLoader',
+    'get_llm',
+    'create_llm',
     'LLMWrapper',
-    'OllamaLLM',
+    'get_embedding',
+    'create_embedding',
     'EmbeddingWrapper',
     'OllamaEmbedding',
     
@@ -81,7 +84,6 @@ __all__ = [
     'DocumentProcessor',
     'ChunkingStrategy',
     'RecursiveChunker',
-    'SemanticChunker',
     'VectorStoreManager',
     'HybridSearcher',
     'BM25Searcher',

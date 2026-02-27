@@ -218,7 +218,14 @@ class DiversityReranker(BaseReranker):
         # Calculate diversity
         # Get embeddings for all results
         contents = [r.content for r in reranked]
-        embeddings = self.embedding_wrapper.embed_texts(contents, normalize=True)
+        embeddings = self.embedding_wrapper.embed_documents(contents)
+        
+        # Normalize embeddings for cosine similarity
+        try:
+            from ...core.embedding import normalize_embeddings
+            embeddings = normalize_embeddings(embeddings)
+        except ImportError:
+            pass
         
         # Select diverse results using MMR (Maximal Marginal Relevance)
         selected = []

@@ -1,193 +1,213 @@
-"""Cross-Encoder reranker implementation."""
-from typing import Any, Dict, List, Optional
-import logging
+"""Cross-encoder reranking using LangChain CrossEncoderReranker.
 
-import torch
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
-import numpy as np
+Replaces custom CrossEncoderReranker with:
+- langchain_community.cross_encoders.HuggingFaceCrossEncoder
+- langchain.retrievers.document_compressors.CrossEncoderReranker
+- langchain.retrievers.ContextualCompressionRetriever
+
+The temporal scoring logic is preserved as a post-processing step (no LangChain equivalent).
+"""
+import logging
+from typing import Any, Dict, List, Optional
+
+from langchain_core.documents import Document as LangChainDocument
+
+# LangChain cross-encoder reranking
+try:
+    from langchain_community.cross_encoders import HuggingFaceCrossEncoder
+    from langchain_classic.retrievers.document_compressors import CrossEncoderReranker as LCCrossEncoderReranker
+    from langchain_classic.retrievers import ContextualCompressionRetriever
+    LANGCHAIN_RERANKER_AVAILABLE = True
+except ImportError:
+    LANGCHAIN_RERANKER_AVAILABLE = False
+
+# Temporal scoring (custom — no LangChain equivalent)
+from ...utils.temporal_utils import extract_temporal_entities, calculate_temporal_score
 
 from .base import BaseReranker, RerankedResult
-from ..retrieval.vector_store import SearchResult
-from ...utils.temporal_utils import extract_temporal_entities, calculate_temporal_score
 
 logger = logging.getLogger(__name__)
 
 
+def create_cross_encoder_reranker(
+    model_name: str = "cross-encoder/ms-marco-MiniLM-L-12-v2",
+    top_n: int = 10,
+) -> Optional['LCCrossEncoderReranker']:
+    """Create a LangChain CrossEncoderReranker.
+    
+    Args:
+        model_name: HuggingFace cross-encoder model name
+        top_n: Number of top documents to return
+        
+    Returns:
+        Configured CrossEncoderReranker or None if not available
+    """
+    if not LANGCHAIN_RERANKER_AVAILABLE:
+        logger.warning("langchain cross-encoder reranker not available. "
+                       "Install: pip install langchain-community sentence-transformers")
+        return None
+    
+    model = HuggingFaceCrossEncoder(model_name=model_name)
+    compressor = LCCrossEncoderReranker(model=model, top_n=top_n)
+    
+    logger.info(f"Created CrossEncoderReranker with model: {model_name}, top_n={top_n}")
+    return compressor
+
+
+def create_compression_retriever(
+    base_retriever,
+    model_name: str = "cross-encoder/ms-marco-MiniLM-L-12-v2",
+    top_n: int = 10,
+) -> Optional['ContextualCompressionRetriever']:
+    """Create a ContextualCompressionRetriever with cross-encoder reranking.
+    
+    This wraps a base retriever with cross-encoder reranking, so that
+    retriever.invoke(query) automatically reranks the results.
+    
+    Args:
+        base_retriever: The underlying retriever to wrap
+        model_name: HuggingFace cross-encoder model name
+        top_n: Number of top documents to return
+        
+    Returns:
+        ContextualCompressionRetriever or None if not available
+    """
+    compressor = create_cross_encoder_reranker(model_name, top_n)
+    if compressor is None:
+        return None
+    
+    compression_retriever = ContextualCompressionRetriever(
+        base_compressor=compressor,
+        base_retriever=base_retriever,
+    )
+    
+    logger.info("Created ContextualCompressionRetriever with CrossEncoder reranking")
+    return compression_retriever
+
+
 class CrossEncoderReranker(BaseReranker):
-    """Cross-Encoder reranker for query-document relevance scoring."""
+    """Cross-encoder reranker using LangChain's built-in CrossEncoderReranker.
+    
+    This class provides the same interface as the original custom reranker
+    but delegates to LangChain's implementation. Temporal scoring (custom)
+    is applied as a post-processing step.
+    """
     
     def __init__(
         self,
         model_name: str = "cross-encoder/ms-marco-MiniLM-L-12-v2",
-        batch_size: int = 32,
-        device: Optional[str] = None,
+        top_n: int = 10,
+        temporal_boost: float = 1.5,
+        temporal_penalty: float = 0.7,
     ):
-        """Initialize the Cross-Encoder reranker."""
+        """Initialize the cross-encoder reranker.
+        
+        Args:
+            model_name: HuggingFace cross-encoder model name
+            top_n: Number of top documents to return
+            temporal_boost: Score multiplier for temporal matches
+            temporal_penalty: Score multiplier for temporal mismatches
+        """
         self.model_name = model_name
-        self.batch_size = batch_size
+        self.top_n = top_n
+        self.temporal_boost = temporal_boost
+        self.temporal_penalty = temporal_penalty
         
-        # Temporal scoring configuration
-        self.temporal_boost = 1.5  # Boost for matching dates
-        self.temporal_penalty = 0.7  # Penalty for mismatched dates
-        self.enable_temporal_scoring = True
-        
-        # Set device
-        if device is None:
-            if torch.cuda.is_available():
-                self.device = "cuda"
-            elif torch.backends.mps.is_available():
-                self.device = "mps"
-            else:
-                self.device = "cpu"
+        # Initialize LangChain cross-encoder
+        self._lc_reranker = None
+        self._hf_model = None
+        self._init_reranker()
+    
+    def _init_reranker(self):
+        """Initialize the LangChain cross-encoder components."""
+        if LANGCHAIN_RERANKER_AVAILABLE:
+            try:
+                self._hf_model = HuggingFaceCrossEncoder(model_name=self.model_name)
+                self._lc_reranker = LCCrossEncoderReranker(
+                    model=self._hf_model,
+                    top_n=self.top_n,
+                )
+                logger.info(f"Initialized LangChain CrossEncoderReranker: {self.model_name}")
+            except Exception as e:
+                logger.error(f"Failed to initialize CrossEncoderReranker: {e}")
+                self._lc_reranker = None
         else:
-            self.device = device
-        
-        # Load model and tokenizer
-        self._load_model()
-    
-    def _load_model(self):
-        """Load Cross-Encoder model."""
-        try:
-            self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-            self.model = AutoModelForSequenceClassification.from_pretrained(
-                self.model_name
-            )
-            self.model.to(self.device)
-            self.model.eval()
-            
-            # Get expected output type
-            self.num_labels = self.model.config.num_labels
-            self.is_regression = self.num_labels == 1
-            
-            logger.info(f"Loaded Cross-Encoder model: {self.model_name}")
-        except Exception as e:
-            logger.error(f"Error loading Cross-Encoder model: {e}")
-            raise
-    
-    def _score_pair(self, query: str, document: str) -> float:
-        """Score a single query-document pair."""
-        # Tokenize
-        encoded = self.tokenizer(
-            query,
-            document,
-            max_length=512,
-            padding=True,
-            truncation=True,
-            return_tensors="pt",
-        )
-        
-        # Move to device
-        encoded = {k: v.to(self.device) for k, v in encoded.items()}
-        
-        # Get score
-        with torch.no_grad():
-            outputs = self.model(**encoded)
-            
-            if self.is_regression:
-                # For regression models, output is a single logit
-                score = outputs.logits.item()
-                # Sigmoid for probability
-                score = 1 / (1 + np.exp(-score))
-            else:
-                # For classification models, use softmax
-                probs = torch.softmax(outputs.logits, dim=1)
-                # Use probability of positive class
-                score = probs[0, 1].item() if self.num_labels == 2 else probs[0, -1].item()
-        
-        return score
+            logger.warning("LangChain cross-encoder reranker not available")
     
     def rerank(
         self,
         query: str,
-        results: List[SearchResult],
+        results: List[Dict[str, Any]],
         top_k: Optional[int] = None,
     ) -> List[RerankedResult]:
-        """Rerank results using Cross-Encoder with temporal awareness."""
+        """Rerank results using LangChain cross-encoder + temporal scoring.
+        
+        Args:
+            query: The original query
+            results: List of search results (dicts with 'content', 'id', 'score', etc.)
+            top_k: Number of top results to return
+        """
+        top_k = top_k or self.top_n
+        
         if not results:
             return []
         
-        top_k = top_k or len(results)
+        # Convert to LangChain Documents for the reranker
+        lc_docs = [
+            LangChainDocument(
+                page_content=r.get("content", ""),
+                metadata={
+                    "id": r.get("id", ""),
+                    "original_score": r.get("score", 0.0),
+                    **r.get("metadata", {}),
+                },
+            )
+            for r in results
+        ]
         
-        # Extract temporal entities from query for temporal-aware reranking
-        query_temporal_entities = []
-        if self.enable_temporal_scoring:
-            query_temporal_entities = extract_temporal_entities(query)
-            if query_temporal_entities:
-                logger.info(f"Query temporal context: {[e.normalized for e in query_temporal_entities]}")
+        # Use LangChain cross-encoder for reranking
+        if self._lc_reranker is not None:
+            try:
+                reranked_docs = self._lc_reranker.compress_documents(lc_docs, query)
+            except Exception as e:
+                logger.error(f"CrossEncoder reranking failed: {e}")
+                reranked_docs = lc_docs
+        else:
+            reranked_docs = lc_docs
+        
+        # Apply temporal scoring (custom, no LangChain equivalent)
+        query_temporal = extract_temporal_entities(query)
         
         reranked_results = []
-        
-        for result in results:
-            # Score the pair
-            score = self._score_pair(query, result.content)
+        for idx, doc in enumerate(reranked_docs[:top_k]):
+            # Get the relevance score from cross-encoder
+            ce_score = doc.metadata.get("relevance_score", 1.0 / (idx + 1))
+            original_score = doc.metadata.get("original_score", 0.0)
             
-            # Apply temporal scoring if enabled and query has temporal entities
-            if self.enable_temporal_scoring and query_temporal_entities:
-                doc_temporal_entities = extract_temporal_entities(result.content)
-                temporal_multiplier = calculate_temporal_score(
-                    query_temporal_entities,
-                    doc_temporal_entities,
-                    match_boost=self.temporal_boost,
-                    mismatch_penalty=self.temporal_penalty,
-                )
-                score = score * temporal_multiplier
-            
-            reranked = RerankedResult(
-                id=result.id,
-                content=result.content,
-                original_score=result.score,
-                reranked_score=score,
-                metadata=result.metadata,
-                document_id=result.document_id,
-                chunk_index=result.chunk_index,
+            # Apply temporal scoring
+            doc_temporal = extract_temporal_entities(doc.page_content)
+            temporal_multiplier = calculate_temporal_score(
+                query_temporal,
+                doc_temporal,
+                match_boost=self.temporal_boost,
+                mismatch_penalty=self.temporal_penalty,
             )
-            reranked_results.append(reranked)
+            
+            final_score = ce_score * temporal_multiplier
+            
+            reranked_results.append(RerankedResult(
+                id=doc.metadata.get("id", ""),
+                content=doc.page_content,
+                original_score=original_score,
+                reranked_score=final_score,
+                metadata={
+                    **doc.metadata,
+                    "cross_encoder_score": ce_score,
+                    "temporal_multiplier": temporal_multiplier,
+                },
+            ))
         
-        # Sort by reranked score
-        reranked_results.sort(key=lambda x: x.reranked_score, reverse=True)
+        # Sort by final reranked score 
+        reranked_results.sort(key=lambda r: r.reranked_score, reverse=True)
         
         return reranked_results[:top_k]
-    
-    def rerank_batch(
-        self,
-        queries: List[str],
-        results_per_query: List[List[SearchResult]],
-        top_k: Optional[int] = None,
-    ) -> List[List[RerankedResult]]:
-        """Rerank multiple result sets in batch for efficiency."""
-        if not queries or not results_per_query:
-            return []
-        
-        all_reranked = []
-        
-        for query, results in zip(queries, results_per_query):
-            reranked = self.rerank(query, results, top_k)
-            all_reranked.append(reranked)
-        
-        return all_reranked
-    
-    def score_batch(
-        self,
-        query: str,
-        documents: List[str],
-    ) -> List[float]:
-        """Score multiple documents against a query."""
-        scores = []
-        
-        for doc in documents:
-            score = self._score_pair(query, doc)
-            scores.append(score)
-        
-        return scores
-    
-    def compute_cross_scores(
-        self,
-        query: str,
-        documents: List[str],
-    ) -> Dict[str, float]:
-        """Compute detailed cross-encoder scores."""
-        scores = self.score_batch(query, documents)
-        
-        return {
-            doc: score for doc, score in zip(documents, scores)
-        }

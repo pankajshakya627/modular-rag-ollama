@@ -1,98 +1,122 @@
-"""HyDE (Hypothetical Document Embeddings) implementation."""
-from typing import Any, Dict, List, Optional
-import logging
+"""HyDE (Hypothetical Document Embedder) using LangChain built-in.
 
-from .document_processor import Document, DocumentChunk
-from .vector_store import SearchResult, VectorStoreManager
+Replaces custom HyDERetriever with langchain.chains.HypotheticalDocumentEmbedder
+which provides the full HyDE pipeline:
+1. Generate hypothetical document from query using LLM
+2. Embed the hypothetical document
+3. Retrieve similar real documents
+"""
+import logging
+from typing import List, Optional
+
+from langchain_classic.chains import HypotheticalDocumentEmbedder
+from langchain_core.prompts import PromptTemplate
+from langchain_core.documents import Document as LangChainDocument
+from langchain_core.language_models import BaseChatModel
+from langchain_core.embeddings import Embeddings
 
 logger = logging.getLogger(__name__)
 
 
+# Default HyDE prompt template
+HYDE_PROMPT = PromptTemplate.from_template(
+    """Please write a passage that would answer the following question.
+The passage should be detailed, factual, and directly relevant.
+
+Question: {question}
+
+Passage:"""
+)
+
+
+def create_hyde_embedder(
+    llm: BaseChatModel,
+    base_embeddings: Embeddings,
+    prompt: Optional[PromptTemplate] = None,
+) -> HypotheticalDocumentEmbedder:
+    """Create a LangChain HypotheticalDocumentEmbedder.
+    
+    This replaces the custom HyDERetriever with a LangChain built-in
+    that handles the full HyDE pipeline.
+    
+    Args:
+        llm: LangChain chat model (e.g., ChatOllama)
+        base_embeddings: Base embedding model (e.g., OllamaEmbeddings)
+        prompt: Optional custom prompt template
+        
+    Returns:
+        Configured HypotheticalDocumentEmbedder
+    """
+    hyde_embedder = HypotheticalDocumentEmbedder.from_llm(
+        llm=llm,
+        base_embeddings=base_embeddings,
+        custom_prompt=prompt or HYDE_PROMPT,
+    )
+    
+    # Override the prompt template if custom one provided
+    if prompt:
+        hyde_embedder.llm_chain.prompt = prompt
+    
+    logger.info("Created HypotheticalDocumentEmbedder (HyDE)")
+    return hyde_embedder
+
+
 class HyDERetriever:
-    """HyDE retriever that uses hypothetical document embeddings for retrieval."""
+    """Backward-compatible wrapper around LangChain HypotheticalDocumentEmbedder.
+    
+    Provides similar interface to the original custom HyDERetriever while
+    delegating to LangChain's built-in HyDE implementation.
+    """
     
     def __init__(
         self,
-        vector_store_manager: VectorStoreManager,
-        llm_wrapper,
-        hypothesis_prompt: Optional[str] = None,
-        temperature: float = 0.3,
-        max_tokens: int = 512,
+        llm=None,
+        embeddings=None,
+        vector_store=None,
+        num_hypothetical_docs: int = 1,
     ):
-        """Initialize the HyDE retriever."""
-        self.vsm = vector_store_manager
-        self.llm_wrapper = llm_wrapper
-        self.hypothesis_prompt = hypothesis_prompt or """Write a detailed hypothetical answer to the question. 
-Include specific facts, examples, and reasoning that would appear in a relevant document.
-
-Question: {query}
-
-Hypothetical Answer:"""
-        self.temperature = temperature
-        self.max_tokens = max_tokens
+        self.llm = llm
+        self.embeddings = embeddings
+        self.vector_store = vector_store
+        self.num_hypothetical_docs = num_hypothetical_docs
+        self._hyde_embedder = None
     
-    def generate_hypothetical_document(self, query: str) -> str:
-        """Generate a hypothetical document for the query."""
-        prompt = self.hypothesis_prompt.format(query=query)
+    def _ensure_initialized(self):
+        """Lazy initialization of the HyDE embedder."""
+        if self._hyde_embedder is None:
+            if self.llm is None or self.embeddings is None:
+                raise ValueError("LLM and embeddings must be provided")
+            self._hyde_embedder = create_hyde_embedder(
+                llm=self.llm,
+                base_embeddings=self.embeddings,
+            )
+    
+    def embed_query(self, query: str) -> List[float]:
+        """Generate hypothetical document and embed it.
         
-        try:
-            response = self.llm_wrapper.llm.invoke(prompt)
-            if hasattr(response, 'content'):
-                return response.content.strip()
-            return str(response).strip()
-        except Exception as e:
-            logger.error(f"Error generating hypothetical document: {e}")
-            # Fallback: return the query itself
-            return query
+        This is the core HyDE step: 
+        query → LLM generates hypothetical answer → embed that answer
+        """
+        self._ensure_initialized()
+        return self._hyde_embedder.embed_query(query)
     
     def retrieve(
         self,
         query: str,
         top_k: int = 10,
-        filters: Optional[Dict[str, Any]] = None,
-        use_hyde: bool = True,
-    ) -> List[SearchResult]:
-        """Retrieve documents using HyDE."""
-        if use_hyde:
-            # Generate hypothetical document
-            logger.info("Generating hypothetical document for query...")
-            hypothetical_doc = self.generate_hypothetical_document(query)
-            
-            # Use the hypothetical document for retrieval
-            results = self.vsm.search(
-                query=hypothetical_doc,
-                top_k=top_k,
-                filters=filters,
-            )
-            
-            logger.info(f"HyDE retrieval: found {len(results)} results using hypothetical document")
-            return results
-        else:
-            # Standard retrieval
-            return self.vsm.search(query, top_k, filters)
-    
-    def retrieve_with_comparison(
-        self,
-        query: str,
-        top_k: int = 10,
-        filters: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, List[SearchResult]]:
-        """Retrieve documents using both HyDE and standard retrieval for comparison."""
-        # Standard retrieval
-        standard_results = self.vsm.search(query, top_k, filters)
+    ) -> List[LangChainDocument]:
+        """Retrieve documents using HyDE embeddings."""
+        if self.vector_store is None:
+            raise ValueError("Vector store must be provided for retrieval")
         
-        # HyDE retrieval
-        hyde_results = self.retrieve(query, top_k, filters, use_hyde=True)
+        # Get HyDE embedding for the query
+        hyde_embedding = self.embed_query(query)
         
-        return {
-            "standard": standard_results,
-            "hyde": hyde_results,
-        }
-    
-    def set_hypothesis_prompt(self, prompt: str) -> None:
-        """Set a custom hypothesis prompt."""
-        self.hypothesis_prompt = prompt
-    
-    def set_llm(self, llm_wrapper) -> None:
-        """Set a different LLM for hypothetical document generation."""
-        self.llm_wrapper = llm_wrapper
+        # Search vector store with the HyDE embedding
+        results = self.vector_store.similarity_search_by_vector(
+            embedding=hyde_embedding,
+            k=top_k,
+        )
+        
+        logger.info(f"HyDE retriever found {len(results)} documents")
+        return results

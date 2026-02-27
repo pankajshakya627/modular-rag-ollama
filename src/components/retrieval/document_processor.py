@@ -1,13 +1,25 @@
-"""Document processing and chunking strategies for Modular RAG."""
+"""Document processing using LangChain text splitters and loaders for Modular RAG.
+
+Uses LangChain built-in text splitters instead of custom implementations:
+- RecursiveCharacterTextSplitter (replaces custom RecursiveChunker)
+- CharacterTextSplitter (replaces custom FixedSizeChunker)
+- langchain_experimental.SemanticChunker (replaces custom SemanticChunker)
+
+Uses LangChain document loaders for file extraction:
+- PyPDFLoader, Docx2txtLoader, TextLoader
+"""
 import os
 import re
-from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+import hashlib
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
-import hashlib
+from typing import Any, Dict, List, Optional
+from dataclasses import dataclass, field
 import logging
+
+# LangChain text splitters (replaces custom chunkers)
+from langchain_text_splitters import RecursiveCharacterTextSplitter, CharacterTextSplitter
+from langchain_core.documents import Document as LangChainDocument
 
 # Direct import to avoid circular dependency
 from src.core.uuid_utils import generate_uuid  # UUID v7 for time-sorted IDs
@@ -104,338 +116,26 @@ class Document:
         )
 
 
-class BaseChunker(ABC):
-    """Abstract base class for text chunkers."""
-    
-    @abstractmethod
-    def chunk(self, text: str, metadata: Optional[Dict[str, Any]] = None) -> List[DocumentChunk]:
-        """Chunk text into smaller pieces."""
-        pass
-
-
-class RecursiveChunker(BaseChunker):
-    """Recursive text chunker using separators."""
-    
-    def __init__(
-        self,
-        chunk_size: int = 1024,
-        chunk_overlap: int = 128,
-        separators: Optional[List[str]] = None,
-        length_function: str = "len",
-    ):
-        """Initialize the recursive chunker."""
-        self.chunk_size = chunk_size
-        self.chunk_overlap = chunk_overlap
-        self.separators = separators or ["\n\n", "\n", ". ", "! ", "? ", "; ", " ", ""]
-        self.length_function = length_function
-        
-        if length_function == "len":
-            self._get_length = len
-        else:
-            self._get_length = len
-    
-    def _split_text(self, text: str, separators: List[str]) -> List[str]:
-        """Split text using hierarchical separators."""
-        if not separators or separators[0] == "":
-            return [text] if text else []
-        
-        current_separators = separators[1:]
-        recursive_texts = []
-        
-        for separator in separators[:1]:
-            if separator:
-                texts = text.split(separator)
-            else:
-                texts = [text]
-            
-            for text_fragment in texts:
-                if text_fragment:
-                    if current_separators:
-                        recursive_texts.extend(
-                            self._split_text(text_fragment.strip(), current_separators)
-                        )
-                    else:
-                        recursive_texts.append(text_fragment.strip())
-        
-        return recursive_texts
-    
-    def chunk(self, text: str, metadata: Optional[Dict[str, Any]] = None) -> List[DocumentChunk]:
-        """Chunk text using recursive splitting."""
-        if not text:
-            return []
-        
-        # Clean the text
-        text = text.strip()
-        
-        # Split text recursively
-        segments = self._split_text(text, self.separators)
-        
-        chunks = []
-        current_chunk = ""
-        current_length = 0
-        chunk_index = 0
-        
-        for segment in segments:
-            segment_length = self._get_length(segment)
-            
-            if current_length + segment_length <= self.chunk_size:
-                current_chunk += ("" if not current_chunk else " ") + segment
-                current_length = self._get_length(current_chunk)
-            else:
-                # Save current chunk if not empty
-                if current_chunk:
-                    chunk = self._create_chunk(
-                        current_chunk, chunk_index, metadata, len(current_chunk)
-                    )
-                    chunks.append(chunk)
-                    chunk_index += 1
-                
-                # Start new chunk
-                if segment_length > self.chunk_size:
-                    # Segment is too big, split it further
-                    sub_chunks = self._split_fixed(
-                        segment, self.chunk_size, self.chunk_overlap
-                    )
-                    for sub_chunk in sub_chunks:
-                        chunk = self._create_chunk(
-                            sub_chunk, chunk_index, metadata, len(sub_chunk)
-                        )
-                        chunks.append(chunk)
-                        chunk_index += 1
-                    current_chunk = ""
-                    current_length = 0
-                else:
-                    current_chunk = segment
-                    current_length = segment_length
-        
-        # Don't forget the last chunk
-        if current_chunk:
-            chunk = self._create_chunk(
-                current_chunk, chunk_index, metadata, len(current_chunk)
-            )
-            chunks.append(chunk)
-        
-        return chunks
-    
-    def _split_fixed(self, text: str, chunk_size: int, overlap: int) -> List[str]:
-        """Split text into fixed-size chunks with overlap."""
-        if len(text) <= chunk_size:
-            return [text] if text else []
-        
-        chunks = []
-        start = 0
-        
-        while start < len(text):
-            end = min(start + chunk_size, len(text))
-            chunks.append(text[start:end])
-            start = end - overlap
-        
-        return chunks
-    
-    def _create_chunk(
-        self,
-        content: str,
-        chunk_index: int,
-        metadata: Optional[Dict[str, Any]],
-        length: int,
-    ) -> DocumentChunk:
-        """Create a document chunk."""
-        chunk_id = generate_uuid()
-        
-        return DocumentChunk(
-            id=chunk_id,
-            content=content,
-            metadata=metadata or {},
-            start_char_idx=0,
-            end_char_idx=length,
-            chunk_index=chunk_index,
+def _langchain_docs_to_chunks(
+    lc_docs: List[LangChainDocument],
+    metadata: Optional[Dict[str, Any]] = None,
+) -> List[DocumentChunk]:
+    """Convert LangChain Document list to DocumentChunk list."""
+    chunks = []
+    for idx, lc_doc in enumerate(lc_docs):
+        merged_meta = {**(metadata or {}), **lc_doc.metadata}
+        chunk = DocumentChunk(
+            id=generate_uuid(),
+            content=lc_doc.page_content,
+            metadata=merged_meta,
+            chunk_index=idx,
         )
-
-
-class SemanticChunker(BaseChunker):
-    """Semantic text chunker using sentence embeddings."""
-    
-    def __init__(
-        self,
-        embedding_wrapper,
-        chunk_size: int = 1024,
-        chunk_overlap: int = 128,
-        similarity_threshold: float = 0.7,
-    ):
-        """Initialize the semantic chunker."""
-        self.chunker = RecursiveChunker(
-            chunk_size=chunk_size,
-            chunk_overlap=chunk_overlap,
-        )
-        self.embedding_wrapper = embedding_wrapper
-        self.similarity_threshold = similarity_threshold
-    
-    def chunk(self, text: str, metadata: Optional[Dict[str, Any]] = None) -> List[DocumentChunk]:
-        """Chunk text semantically based on embedding similarity."""
-        if not text:
-            return []
-        
-        # First, create initial chunks using recursive chunking
-        initial_chunks = self.chunker.chunk(text, metadata)
-        
-        if len(initial_chunks) <= 1:
-            return initial_chunks
-        
-        # Get embeddings for each chunk
-        contents = [chunk.content for chunk in initial_chunks]
-        embeddings = self.embedding_wrapper.embed_texts(contents)
-        
-        # Merge chunks that are semantically similar
-        final_chunks = []
-        current_chunk = initial_chunks[0]
-        current_embedding = embeddings[0]
-        current_start = 0
-        
-        for i in range(1, len(initial_chunks)):
-            chunk = initial_chunks[i]
-            embedding = embeddings[i]
-            
-            # Calculate similarity with current chunk
-            similarity = self.embedding_wrapper.embedding.compute_similarity(
-                current_embedding, embedding
-            )
-            
-            if similarity >= self.similarity_threshold:
-                # Merge chunks
-                current_chunk.content += " " + chunk.content
-                current_embedding = self.embedding_wrapper.embedding.compute_centroid(
-                    [current_embedding, embedding]
-                )
-            else:
-                # Save current chunk and start new one
-                current_chunk.end_char_idx = chunk.start_char_idx
-                final_chunks.append(current_chunk)
-                
-                current_chunk = chunk
-                current_embedding = embedding
-                current_start = i
-        
-        # Don't forget the last chunk
-        final_chunks.append(current_chunk)
-        
-        # Re-index chunks
-        for idx, chunk in enumerate(final_chunks):
-            chunk.chunk_index = idx
-        
-        return final_chunks
-
-
-class FixedSizeChunker(BaseChunker):
-    """Fixed-size text chunker."""
-    
-    def __init__(self, chunk_size: int = 1024, chunk_overlap: int = 128):
-        """Initialize the fixed-size chunker."""
-        self.chunk_size = chunk_size
-        self.chunk_overlap = chunk_overlap
-    
-    def chunk(self, text: str, metadata: Optional[Dict[str, Any]] = None) -> List[DocumentChunk]:
-        """Chunk text into fixed-size pieces."""
-        if not text:
-            return []
-        
-        chunks = []
-        start = 0
-        chunk_index = 0
-        
-        while start < len(text):
-            end = min(start + self.chunk_size, len(text))
-            content = text[start:end]
-            
-            chunk = DocumentChunk(
-                id=generate_uuid(),
-                content=content,
-                metadata=metadata or {},
-                start_char_idx=start,
-                end_char_idx=end,
-                chunk_index=chunk_index,
-            )
-            chunks.append(chunk)
-            
-            start = end - self.chunk_overlap
-            chunk_index += 1
-            
-            if start >= len(text):
-                break
-        
-        return chunks
-
-
-class SentenceChunker(BaseChunker):
-    """Sentence-based text chunker."""
-    
-    def __init__(
-        self,
-        chunk_size: int = 1024,
-        chunk_overlap: int = 128,
-        sentence_endings: str = ".!?",
-    ):
-        """Initialize the sentence chunker."""
-        self.chunk_size = chunk_size
-        self.chunk_overlap = chunk_overlap
-        self.sentence_endings = sentence_endings
-    
-    def _split_into_sentences(self, text: str) -> List[str]:
-        """Split text into sentences."""
-        import re
-        sentence_pattern = f"[{re.escape(self.sentence_endings)}]+"
-        sentences = re.split(sentence_pattern, text)
-        return [s.strip() for s in sentences if s.strip()]
-    
-    def chunk(self, text: str, metadata: Optional[Dict[str, Any]] = None) -> List[DocumentChunk]:
-        """Chunk text by sentences."""
-        if not text:
-            return []
-        
-        sentences = self._split_into_sentences(text)
-        
-        chunks = []
-        current_chunk = ""
-        current_length = 0
-        chunk_index = 0
-        
-        for sentence in sentences:
-            sentence_length = len(sentence)
-            
-            if current_length + sentence_length <= self.chunk_size:
-                current_chunk += ("" if not current_chunk else " ") + sentence + "."
-                current_length += sentence_length + 1
-            else:
-                if current_chunk:
-                    chunk = DocumentChunk(
-                        id=generate_uuid(),
-                        content=current_chunk.strip(),
-                        metadata=metadata or {},
-                        start_char_idx=0,
-                        end_char_idx=current_length,
-                        chunk_index=chunk_index,
-                    )
-                    chunks.append(chunk)
-                    chunk_index += 1
-                
-                current_chunk = sentence + "."
-                current_length = sentence_length + 1
-        
-        if current_chunk:
-            chunk = DocumentChunk(
-                id=generate_uuid(),
-                content=current_chunk.strip(),
-                metadata=metadata or {},
-                start_char_idx=0,
-                end_char_idx=current_length,
-                chunk_index=chunk_index,
-            )
-            chunks.append(chunk)
-        
-        return chunks
+        chunks.append(chunk)
+    return chunks
 
 
 class DocumentProcessor:
-    """Main document processor for handling various document types."""
+    """Main document processor using LangChain text splitters and loaders."""
     
     def __init__(
         self,
@@ -452,17 +152,17 @@ class DocumentProcessor:
         
         # Metadata extraction settings
         self.enable_metadata_extraction = True
-        self.enable_llm_metadata = False  # LLM extraction disabled by default (slower)
+        self.enable_llm_metadata = False
         self.metadata_extractor = None
         
-        self._init_chunker()
+        self._init_splitter()
         self._init_metadata_extractor()
     
     def _init_metadata_extractor(self):
         """Initialize metadata extractor if available."""
         if METADATA_EXTRACTION_AVAILABLE and self.enable_metadata_extraction:
             self.metadata_extractor = DocumentMetadataExtractor(
-                llm_wrapper=None,  # Will be set later if LLM extraction enabled
+                llm_wrapper=None,
                 enable_llm_extraction=self.enable_llm_metadata,
                 enable_rule_extraction=True,
             )
@@ -470,33 +170,48 @@ class DocumentProcessor:
         else:
             logger.info("Metadata extraction not available or disabled")
     
-    def _init_chunker(self):
-        """Initialize the appropriate chunker."""
+    def _init_splitter(self):
+        """Initialize the appropriate LangChain text splitter."""
         if self.chunking_strategy == ChunkingStrategy.RECURSIVE:
-            self.chunker = RecursiveChunker(
+            # LangChain RecursiveCharacterTextSplitter — identical to custom RecursiveChunker
+            self.splitter = RecursiveCharacterTextSplitter(
                 chunk_size=self.chunk_size,
                 chunk_overlap=self.chunk_overlap,
+                separators=["\n\n", "\n", ". ", "! ", "? ", "; ", " ", ""],
+                length_function=len,
             )
         elif self.chunking_strategy == ChunkingStrategy.SEMANTIC:
+            # LangChain experimental SemanticChunker
             if self.embedding_wrapper is None:
                 raise ValueError("Embedding wrapper required for semantic chunking")
-            self.chunker = SemanticChunker(
-                embedding_wrapper=self.embedding_wrapper,
-                chunk_size=self.chunk_size,
-                chunk_overlap=self.chunk_overlap,
-            )
+            try:
+                from langchain_experimental.text_splitter import SemanticChunker
+                self.splitter = SemanticChunker(
+                    embeddings=self.embedding_wrapper,
+                    breakpoint_threshold_type="percentile",
+                )
+            except ImportError:
+                logger.warning("langchain-experimental not installed, falling back to recursive")
+                self.splitter = RecursiveCharacterTextSplitter(
+                    chunk_size=self.chunk_size,
+                    chunk_overlap=self.chunk_overlap,
+                )
         elif self.chunking_strategy == ChunkingStrategy.FIXED_SIZE:
-            self.chunker = FixedSizeChunker(
+            # LangChain CharacterTextSplitter with empty separator = fixed size
+            self.splitter = CharacterTextSplitter(
                 chunk_size=self.chunk_size,
                 chunk_overlap=self.chunk_overlap,
+                separator="",  # Fixed size, no separator
             )
         elif self.chunking_strategy == ChunkingStrategy.SENTENCE:
-            self.chunker = SentenceChunker(
+            # Use RecursiveCharacterTextSplitter with sentence separators
+            self.splitter = RecursiveCharacterTextSplitter(
                 chunk_size=self.chunk_size,
                 chunk_overlap=self.chunk_overlap,
+                separators=[". ", "! ", "? ", "\n\n", "\n", " ", ""],
             )
         else:
-            self.chunker = RecursiveChunker(
+            self.splitter = RecursiveCharacterTextSplitter(
                 chunk_size=self.chunk_size,
                 chunk_overlap=self.chunk_overlap,
             )
@@ -513,14 +228,14 @@ class DocumentProcessor:
         # Clean the text
         text = self._clean_text(text)
         
-        # Chunk the text
-        chunks = self.chunker.chunk(text, metadata)
+        # Use LangChain splitter to chunk the text
+        lc_docs = self.splitter.create_documents([text], metadatas=[metadata or {}])
+        chunks = _langchain_docs_to_chunks(lc_docs, metadata)
         
         # Extract and attach metadata to each chunk
         if self.metadata_extractor and chunks:
             chunks = self._enrich_chunks_with_metadata(chunks)
         
-        # Create document
         document = Document(
             id=doc_id,
             content=text,
@@ -529,26 +244,24 @@ class DocumentProcessor:
             source_type="text",
         )
         
-        logger.info(f"Processed text into {len(chunks)} chunks (with metadata extraction: {self.metadata_extractor is not None})")
+        logger.info(
+            f"Processed text into {len(chunks)} chunks "
+            f"(with metadata extraction: {self.metadata_extractor is not None})"
+        )
         return document
     
     def _enrich_chunks_with_metadata(self, chunks: List[DocumentChunk]) -> List[DocumentChunk]:
         """Enrich chunks with extracted metadata."""
         for chunk in chunks:
             try:
-                # Extract metadata from chunk content
                 extracted = self.metadata_extractor.extract(
                     chunk.content, 
                     use_llm=self.enable_llm_metadata
                 )
-                
-                # Merge extracted metadata with existing metadata
                 extracted_dict = extracted.to_dict()
                 chunk.metadata.update(extracted_dict)
-                
             except Exception as e:
                 logger.warning(f"Failed to extract metadata for chunk {chunk.id}: {e}")
-        
         return chunks
     
     def process_file(
@@ -556,13 +269,13 @@ class DocumentProcessor:
         file_path: str,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> Document:
-        """Process a file and create a document."""
+        """Process a file using LangChain document loaders."""
         path = Path(file_path)
         
         if not path.exists():
             raise FileNotFoundError(f"File not found: {file_path}")
         
-        # Determine file type and extract text
+        # Use LangChain document loaders for extraction
         content = self._extract_text_from_file(file_path)
         
         # Generate document ID from file hash
@@ -599,7 +312,7 @@ class DocumentProcessor:
         if not path.exists() or not path.is_dir():
             raise ValueError(f"Invalid directory: {directory_path}")
         
-        extensions = extensions or [".txt", ".pdf", ".docx", ".md", ".html"]
+        extensions = extensions or [".txt", ".pdf", ".docx", ".md"]
         
         files = []
         if recursive:
@@ -626,19 +339,13 @@ class DocumentProcessor:
     
     def _clean_text(self, text: str) -> str:
         """Clean and normalize text."""
-        # Remove excessive whitespace
         text = re.sub(r'\s+', ' ', text)
-        # Remove control characters
         text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
-        # Normalize unicode
         text = text.encode('ascii', 'ignore').decode('utf-8')
         return text.strip()
     
     def _extract_text_from_file(self, file_path: str) -> str:
-        """Extract text from various file formats."""
-        import pypdf
-        from docx import Document as DocxDocument
-        
+        """Extract text using LangChain document loaders where available."""
         path = Path(file_path)
         ext = path.suffix.lower()
         
@@ -647,16 +354,34 @@ class DocumentProcessor:
                 return f.read()
         
         elif ext == ".pdf":
-            text = []
-            with open(file_path, 'rb') as f:
-                pdf = pypdf.PdfReader(f)
-                for page in pdf.pages:
-                    text.append(page.extract_text())
-            return '\n'.join(text)
+            # Use LangChain PyPDFLoader
+            try:
+                from langchain_community.document_loaders import PyPDFLoader
+                loader = PyPDFLoader(file_path)
+                docs = loader.load()
+                return '\n'.join([doc.page_content for doc in docs])
+            except ImportError:
+                # Fallback to pypdf directly
+                import pypdf
+                text = []
+                with open(file_path, 'rb') as f:
+                    pdf = pypdf.PdfReader(f)
+                    for page in pdf.pages:
+                        text.append(page.extract_text())
+                return '\n'.join(text)
         
         elif ext == ".docx":
-            doc = DocxDocument(file_path)
-            return '\n'.join([para.text for para in doc.paragraphs])
+            # Use LangChain Docx2txtLoader
+            try:
+                from langchain_community.document_loaders import Docx2txtLoader
+                loader = Docx2txtLoader(file_path)
+                docs = loader.load()
+                return '\n'.join([doc.page_content for doc in docs])
+            except ImportError:
+                # Fallback to python-docx
+                from docx import Document as DocxDocument
+                doc = DocxDocument(file_path)
+                return '\n'.join([para.text for para in doc.paragraphs])
         
         elif ext == ".html":
             from bs4 import BeautifulSoup
@@ -685,4 +410,40 @@ class DocumentProcessor:
             self.chunk_size = chunk_size
         if chunk_overlap:
             self.chunk_overlap = chunk_overlap
-        self._init_chunker()
+        self._init_splitter()
+
+
+# Backward compatibility aliases for old chunker classes
+# These are no longer used but some tests may reference them
+class RecursiveChunker:
+    """Backward-compatible wrapper around LangChain RecursiveCharacterTextSplitter."""
+    
+    def __init__(self, chunk_size: int = 1024, chunk_overlap: int = 128, **kwargs):
+        self._splitter = RecursiveCharacterTextSplitter(
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            separators=["\n\n", "\n", ". ", "! ", "? ", "; ", " ", ""],
+        )
+    
+    def chunk(self, text: str, metadata: Optional[Dict[str, Any]] = None) -> List[DocumentChunk]:
+        if not text:
+            return []
+        lc_docs = self._splitter.create_documents([text], metadatas=[metadata or {}])
+        return _langchain_docs_to_chunks(lc_docs, metadata)
+
+
+class FixedSizeChunker:
+    """Backward-compatible wrapper around LangChain CharacterTextSplitter."""
+    
+    def __init__(self, chunk_size: int = 1024, chunk_overlap: int = 128, **kwargs):
+        self._splitter = CharacterTextSplitter(
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            separator="",
+        )
+    
+    def chunk(self, text: str, metadata: Optional[Dict[str, Any]] = None) -> List[DocumentChunk]:
+        if not text:
+            return []
+        lc_docs = self._splitter.create_documents([text], metadatas=[metadata or {}])
+        return _langchain_docs_to_chunks(lc_docs, metadata)
