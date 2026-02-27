@@ -2,30 +2,97 @@
 
 ---
 
-## 🧩 The Problem We're Solving
+## 🧩 Problem Statement
 
-### What Are We Building?
+### 1. Context
 
-**modular-rag-ollama** is a production-grade, **locally-hosted** AI Question-Answering (QA) system. It allows users to upload their own documents (.pdf, .txt, .docx), index them locally, and ask natural language questions powered by locally-running LLMs via Ollama.
+Large Language Models (LLMs) such as `llama3`, `gemma2`, and `mistral` have demonstrated remarkable capability in natural language reasoning. However, they suffer from two critical limitations in enterprise and professional use:
 
-### Who Has This Problem?
+1. **Knowledge cutoff** — LLMs are trained on static datasets with a fixed cutoff date. They have no awareness of proprietary, real-time, or post-training knowledge.
+2. **Hallucination** — LLMs generate plausible-sounding but factually incorrect content when they lack relevant context.
 
-- **Enterprises** that cannot send sensitive documents to ChatGPT or OpenAI due to compliance (GDPR, HIPAA, SOC2).
-- **Developers and researchers** who need cost-free, offline document intelligence.
-- **Teams** who need precise, citation-backed answers over a proprietary knowledge base — not hallucinated generalist responses.
+The standard mitigation is **Retrieval-Augmented Generation (RAG)**: retrieve relevant documents at query time and inject them into the LLM's context window. However, naive RAG implementations fail to scale beyond proof-of-concept because of critical retrieval quality and privacy constraints described below.
 
-### Why Naive RAG Doesn't Scale
+---
 
-A basic "embed-and-search" RAG fails in practice for four critical reasons:
+### 2. Core Problem Definition
 
-| Pain Point                    | What Breaks            | Why                                                                      |
-| ----------------------------- | ---------------------- | ------------------------------------------------------------------------ |
-| **Vocabulary mismatch**       | Dense vector retrieval | Embeddings miss exact technical terms, hex codes, product IDs            |
-| **Missing multi-hop context** | Single-chunk retrieval | Answers needing info from 3+ separate sections get incomplete context    |
-| **Retrieval noise**           | Top-K results          | Semantically similar but irrelevant chunks dilute the LLM context window |
-| **Context fragmentation**     | Fixed-size chunking    | Splitting mid-sentence or mid-paragraph loses coherence                  |
+> **How do we build a locally-hosted, privacy-preserving document intelligence system that reliably answers complex, multi-faceted questions from a user's own document corpus, with cited, verifiable sources — without relying on cloud AI services?**
 
-**Our solution addresses all four with a multi-stage, multi-strategy pipeline.**
+This problem has three distinct sub-problems:
+
+#### 2a. Retrieval Accuracy Problem
+
+Standard single-strategy retrieval (dense embedding search) fails in the following scenarios:
+
+| Scenario                    | Query                                                    | Failure Reason                                 |
+| --------------------------- | -------------------------------------------------------- | ---------------------------------------------- |
+| **Exact-term queries**      | `"RFC 7231 section 4.3"`                                 | Embeddings capture meaning, not exact strings  |
+| **Code/error lookups**      | `"CUDA error 0x80070005"`                                | Hex codes have no semantic neighbors           |
+| **Cross-section multi-hop** | `"Compare OAuth2 and SAML for enterprise SSO"`           | Answer spans 3+ disconnected document sections |
+| **Vocabulary mismatch**     | `"heart attack"` vs doc saying `"myocardial infarction"` | Synonym blindness without BM25 coverage        |
+
+#### 2b. Retrieval Noise Problem
+
+Top-K retrieval returns many _semantically similar but contextually irrelevant_ chunks. These dilute the LLM's context window, causing:
+
+- Confusion in generated answers.
+- Higher token usage (cost in cloud, latency locally).
+- Decreased answer precision and confidence.
+
+#### 2c. Data Privacy & Sovereignty Problem
+
+Existing solutions (ChatGPT plugins, Azure OpenAI, Amazon Bedrock) require **sending document data to external APIs**, which is prohibited for:
+
+- Regulated industries (healthcare, finance, legal) under GDPR, HIPAA, SOC2.
+- Internal R&D and IP-sensitive documents.
+- Air-gapped environments with no internet access.
+
+---
+
+### 3. Stakeholder Constraints
+
+| Stakeholder            | Constraint                                                             |
+| ---------------------- | ---------------------------------------------------------------------- |
+| **Legal / Compliance** | No document data may leave the on-premise network                      |
+| **IR / IT**            | Solution must run on existing local hardware (GPU optional)            |
+| **End users**          | Must be accessible via a simple web UI — no CLI interaction            |
+| **Developers**         | Must be modular, testable, and extensible without rewriting core logic |
+
+---
+
+### 4. Requirements
+
+#### Functional Requirements
+
+- Users can upload `.pdf`, `.txt`, and `.docx` files and have them indexed.
+- Users can ask natural language questions and receive grounded, cited answers.
+- Retrieved context must include source document, chunk location, and relevance score.
+- The system must handle complex multi-part questions by decomposing them.
+- The system must gracefully fall back when retrieval returns no relevant context.
+
+#### Non-Functional Requirements
+
+- **Privacy**: All inference and storage must be entirely local (no external API calls).
+- **Accuracy**: Multi-strategy retrieval must outperform single-vector RAG baselines.
+- **Extensibility**: Each retrieval strategy must be independently configurable and replaceable.
+- **Transparency**: The system must expose which workflow stage produced each answer.
+
+---
+
+### 5. Solution Approach
+
+We address all sub-problems through a **multi-strategy retrieval pipeline** orchestrated by **LangGraph**, running entirely locally on **Ollama**:
+
+| Sub-Problem                             | Solution Component                                              |
+| --------------------------------------- | --------------------------------------------------------------- |
+| Exact-term retrieval failure            | **BM25 Sparse Retriever** (`langchain-community BM25Retriever`) |
+| Semantic gap between query and document | **HyDE** (`HypotheticalDocumentEmbedder`)                       |
+| Multi-hop contextual synthesis          | **RAPTOR** (hierarchical cluster summarization)                 |
+| Retrieval noise                         | **Cross-Encoder Reranking** (`CrossEncoderReranker`)            |
+| Single-method fragility                 | **Reciprocal Rank Fusion** via `EnsembleRetriever`              |
+| Data privacy                            | **Ollama local LLM server** + **ChromaDB embedded storage**     |
+| Usability                               | **Streamlit web interface** with upload, config, and chat       |
 
 ---
 
