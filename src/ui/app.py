@@ -97,7 +97,7 @@ with st.sidebar:
                 processor = DocumentProcessor(
                     chunking_strategy=ChunkingStrategy.RECURSIVE,
                     chunk_size=chunk_size,
-                    overlap=chunk_overlap
+                    chunk_overlap=chunk_overlap
                 )
                 vector_store = LangChainChromaVectorStore(embedding_wrapper=embedding)
                 vsm = VectorStoreManager(vector_store=vector_store, embedding_wrapper=embedding)
@@ -121,7 +121,7 @@ with st.sidebar:
 
 # Main Interface
 st.title("🤖 Modular RAG Assistant")
-st.markdown("Ask questions based on your indexed documents using advance LangGraph workflows.")
+st.markdown("Ask questions based on your indexed documents using advanced LangGraph workflows.")
 
 # Initialize the workflow
 @st.cache_resource
