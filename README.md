@@ -1,6 +1,6 @@
 # Modular RAG - Production Ready RAG System
 
-A modular, production-ready Retrieval-Augmented Generation (RAG) system built with Ollama for LLM and embeddings. Features HyDE, RAPTOR, hybrid search, and LangGraph orchestration.
+A modular, production-ready Retrieval-Augmented Generation (RAG) system built with **LangChain**, **LangGraph**, and **Ollama** for entirely local LLM inference and embeddings. Features a **Streamlit Web UI**, HyDE, RAPTOR, hybrid search, and cross-encoder reranking.
 
 ![Modular RAG](https://img.shields.io/badge/version-1.0.0-blue) ![Python 3.10+](https://img.shields.io/badge/python-3.10+-green) ![License MIT](https://img.shields.io/badge/license-MIT-yellow)
 
@@ -28,8 +28,8 @@ Most RAG implementations use a simple pattern that **fails in production**:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                        FastAPI Layer                         │
-│                    POST /query | WS /ws/query                │
+│                       Presentation Layer                    │
+│   Streamlit Web UI (Chat & Config) | FastAPI REST Endpoints │
 └──────────────────────────┬──────────────────────────────────┘
                            │
                            ▼
@@ -54,7 +54,7 @@ Most RAG implementations use a simple pattern that **fails in production**:
                             ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                       Core Layer                            │
-│   LLMWrapper (ChatOllama) | EmbeddingWrapper | Config       │
+│   ChatOllama | OllamaEmbeddings | LangChain Integrations    │
 └─────────────────────────────────────────────────────────────┘
                            │
                            ▼
@@ -249,8 +249,11 @@ ollama pull llama3:8b
 ollama pull nomic-embed-text
 ollama serve
 
-# Run API
-python -m src.main --mode api --port 8000
+# Run Streamlit Web UI (Interactive Chat & Config)
+python src/main.py --mode ui
+
+# Or run Headless API Server
+python src/main.py --mode api --port 8000
 ```
 
 ---
