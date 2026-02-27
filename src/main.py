@@ -3,6 +3,13 @@ import uvicorn
 import logging
 import argparse
 import os
+import sys
+
+# Add project root to PYTHONPATH so `python src/main.py` works
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
 from src.core.config import get_config
 
 # Configure logging
@@ -18,9 +25,9 @@ def main():
     parser = argparse.ArgumentParser(description="Modular RAG System (LangChain + LangGraph)")
     parser.add_argument(
         "--mode",
-        choices=["api", "cli", "index"],
+        choices=["api", "cli", "index", "ui"],
         default="api",
-        help="Run mode: api (default), cli, or index"
+        help="Run mode: api (default), cli, index, or ui"
     )
     parser.add_argument(
         "--host",
@@ -65,6 +72,8 @@ def main():
         if not args.path:
             parser.error("--mode index requires --path argument")
         run_index(args.path, args.recursive, args.chunk_size)
+    elif args.mode == "ui":
+        run_ui(args.port)
 
 
 def run_api(host: str, port: int, reload: bool):
@@ -166,6 +175,16 @@ def run_index(path: str, recursive: bool, chunk_size: int):
     print("🔄 Indexing with LangChain ChromaDB...")
     vsm.index_documents(documents)
     print(f"✅ Indexed {len(documents)} documents successfully!")
+
+
+def run_ui(port: int):
+    """Run the Streamlit UI."""
+    import subprocess
+    logger.info(f"Starting Streamlit UI on port {port}")
+    try:
+        subprocess.run([sys.executable, "-m", "streamlit", "run", "src/ui/app.py", "--server.port", str(port)])
+    except KeyboardInterrupt:
+        logger.info("Streamlit UI stopped.")
 
 
 if __name__ == "__main__":

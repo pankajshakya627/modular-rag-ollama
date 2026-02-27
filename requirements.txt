@@ -47,6 +47,7 @@ fastapi
 uvicorn
 pydantic
 pydantic-settings
+streamlit
 
 # Configuration
 pyyaml
