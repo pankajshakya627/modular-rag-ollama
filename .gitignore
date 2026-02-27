@@ -223,3 +223,6 @@ __marimo__/
 data/vector_store/
 data/documents/
 *.pdf
+
+# Private Interview Guide
+docs/INTERVIEW_GUIDE.md
