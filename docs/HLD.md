@@ -1,8 +1,134 @@
 # High-Level Design (HLD)
 
-## 📌 Overview
+---
 
-**modular-rag-ollama** is a production-grade Retrieval-Augmented Generation (RAG) framework designed for **local-first AI** applications. It combines state-of-the-art retrieval techniques with LLM-powered generation, all running **completely locally** using Ollama.
+## 🧩 The Problem We're Solving
+
+### What Are We Building?
+
+**modular-rag-ollama** is a production-grade, **locally-hosted** AI Question-Answering (QA) system. It allows users to upload their own documents (.pdf, .txt, .docx), index them locally, and ask natural language questions powered by locally-running LLMs via Ollama.
+
+### Who Has This Problem?
+
+- **Enterprises** that cannot send sensitive documents to ChatGPT or OpenAI due to compliance (GDPR, HIPAA, SOC2).
+- **Developers and researchers** who need cost-free, offline document intelligence.
+- **Teams** who need precise, citation-backed answers over a proprietary knowledge base — not hallucinated generalist responses.
+
+### Why Naive RAG Doesn't Scale
+
+A basic "embed-and-search" RAG fails in practice for four critical reasons:
+
+| Pain Point                    | What Breaks            | Why                                                                      |
+| ----------------------------- | ---------------------- | ------------------------------------------------------------------------ |
+| **Vocabulary mismatch**       | Dense vector retrieval | Embeddings miss exact technical terms, hex codes, product IDs            |
+| **Missing multi-hop context** | Single-chunk retrieval | Answers needing info from 3+ separate sections get incomplete context    |
+| **Retrieval noise**           | Top-K results          | Semantically similar but irrelevant chunks dilute the LLM context window |
+| **Context fragmentation**     | Fixed-size chunking    | Splitting mid-sentence or mid-paragraph loses coherence                  |
+
+**Our solution addresses all four with a multi-stage, multi-strategy pipeline.**
+
+---
+
+## 🛠️ Technology Stack
+
+| Layer                | Technology                 | Version     | Role                                                                 |
+| -------------------- | -------------------------- | ----------- | -------------------------------------------------------------------- |
+| **LLM Runtime**      | Ollama                     | Latest      | Serves local LLMs via a REST API (e.g., `llama3`, `gemma`)           |
+| **LLM Interface**    | `langchain-ollama`         | 0.3.x       | `ChatOllama` for structured chat completions via LangChain           |
+| **Embedding**        | `langchain-ollama`         | 0.3.x       | `OllamaEmbeddings` for dense vector encoding                         |
+| **Sparse Retrieval** | `langchain-community`      | Latest      | `BM25Retriever` for keyword-based lexical search                     |
+| **Hybrid Fusion**    | `langchain-classic`        | 1.2.7       | `EnsembleRetriever` combines BM25 + dense with RRF weighting         |
+| **HyDE**             | `langchain-classic`        | 1.2.7       | `HypotheticalDocumentEmbedder` for query-to-document bridging        |
+| **Text Splitting**   | `langchain-text-splitters` | Latest      | `RecursiveCharacterTextSplitter`, `SemanticChunker`                  |
+| **Vector Store**     | ChromaDB                   | 0.4.x       | Embedded, persistent vector storage on SQLite                        |
+| **Reranking**        | `sentence-transformers`    | Latest      | `CrossEncoderReranker` for bi-level relevance scoring                |
+| **Orchestration**    | LangGraph                  | 0.2.x       | State-machine based DAG workflow with conditional branching          |
+| **Chains**           | LCEL                       | (LangChain) | `create_stuff_documents_chain` + pipe operators for answer synthesis |
+| **Web UI**           | Streamlit                  | 1.54.x      | Interactive document upload, configuration toggles, chat interface   |
+| **API**              | FastAPI                    | 0.100+      | REST endpoint for headless deployments                               |
+| **Config**           | Pydantic Settings          | v2          | Type-safe `.env` + YAML configuration resolution                     |
+
+---
+
+## 💡 Architectural Thought Process
+
+### Guiding Philosophy: "Defense in Depth"
+
+> _"No single retrieval method is perfect. The right architecture layers multiple strategies so their failure modes cancel each other out."_
+
+When designing this system we asked **three questions for every component**:
+
+1. **What does this component do well?**
+2. **Where does it fail?**
+3. **What backs it up if it fails?**
+
+This led to layered redundancy:
+
+- If **dense retrieval** misses exact keywords → **BM25** catches them.
+- If **BM25** misses semantic meaning → **dense** catches it.
+- If **both miss** due to query-document style mismatch → **HyDE** bridges the gap.
+- If all retrievals return noisy results → **Cross-Encoder Reranking** re-scores with full attention.
+- If a single chunk lacks full context → **RAPTOR** provides pre-summarized cluster views.
+
+### From Linear Pipeline to State Machine
+
+The original design used a simple sequential chain: `query → retrieve → generate`. This broke down quickly:
+
+- You can't **run retrievers in parallel** with a chain.
+- You can't **conditionally branch** (e.g., skip HyDE for factual lookups).
+- You can't **persist state** across parallel node executions without race conditions.
+
+The shift to **LangGraph's `StateGraph`** treats each RAG stage as a **node in a directed graph** with a shared, typed state dictionary. This gives us:
+
+- True parallel execution across retrieval nodes.
+- Conditional routing (e.g., "if query is complex → decompose; else → direct retrieval").
+- Error logging per-node without aborting the entire pipeline.
+- Built-in checkpointing via `MemorySaver` for conversation persistence.
+
+### Why Replace Custom Code with LangChain Built-ins?
+
+The codebase originally had 7 custom-implemented classes (chunkers, searchers, HyDE pipelines, etc.). These were replaced with LangChain equivalents for three reasons:
+
+1. **Proven correctness** — LangChain built-ins are tested across thousands of production deployments.
+2. **Future-proof interfaces** — LangChain updates (tokenizers, APIs, integrations) flow into the project automatically.
+3. **Interoperability** — LangChain components share interfaces (`Retriever`, `BaseEmbeddings`, `BaseChatModel`) making them composable via LCEL's pipe (`|`) operator.
+
+---
+
+## 🔍 Why Specific Functions and Classes Were Chosen
+
+### `ChatOllama` over a Custom LLM Wrapper
+
+| Approach            | Lines of Code | Streaming | LangChain Compatibility |
+| ------------------- | ------------- | --------- | ----------------------- |
+| Custom `LLMWrapper` | ~170          | Manual    | Only with adapters      |
+| `ChatOllama`        | 1 import      | Native    | ✅ Full                 |
+
+`ChatOllama` implements `BaseChatModel`, which means it is natively composable with LCEL via `|` and works out-of-the-box with all LangChain chains and prompts. Our custom wrapper needed brittle adapter code to achieve the same.
+
+### `RecursiveCharacterTextSplitter` over Custom Chunkers
+
+The custom `RecursiveChunker` was a re-implementation of almost exactly what LangChain already provides. `RecursiveCharacterTextSplitter` splits on `["\n\n", "\n", " ", ""]` in order, ensuring **semantic boundaries are preserved** (paragraph → sentence → word). Custom implementations often split naively on character count alone.
+
+### `EnsembleRetriever` for Hybrid Search
+
+The custom `HybridSearcher` had a hand-rolled Reciprocal Rank Fusion (RRF) implementation. LangChain's `EnsembleRetriever` provides **native RRF fusion** with configurable weights and was validated against multiple retrieval benchmark datasets. Replacing this eliminated ~80 lines of custom scoring logic.
+
+### `HypotheticalDocumentEmbedder` for HyDE
+
+Our custom HyDE pipeline manually called the LLM, formatted the prompt, embedded the response, and ran a similarity search. `HypotheticalDocumentEmbedder` encapsulates this exact sequence: `LLM generation → embedding → retrieval`, supporting any `BaseChatModel` and `BaseEmbeddings` pair automatically.
+
+### `create_stuff_documents_chain` for Answer Generation
+
+The original `AnswerGenerator` manually concatenated context strings, formatted prompts with Jinja templates, and called the LLM. LangChain's `create_stuff_documents_chain` handles this "stuff" pattern (stuff all context docs into one prompt) natively, with support for custom prompts via `ChatPromptTemplate`. The LCEL pipe operator then connects this chain to any retriever or upstream node.
+
+### `CrossEncoderReranker` + `HuggingFaceCrossEncoder`
+
+The custom cross-encoder used raw `sentence-transformers` inference. LangChain's `CrossEncoderReranker` wraps this with the `BaseDocumentCompressor` interface, making it pluggable into any `ContextualCompressionRetriever`. Our custom temporal scoring logic was preserved as a post-processing step on top of LangChain's output — the only custom code intentionally kept.
+
+### LangGraph `Annotated[List[str], operator.add]` for Errors State
+
+A critical LangGraph design detail: when multiple nodes run in **parallel** (e.g., dense, sparse, HyDE retrievers), they all try to write to the shared GraphState simultaneously. Without annotation, this causes `InvalidUpdateError`. Using `Annotated[List[str], operator.add]` tells LangGraph to **merge** (append) parallel writes instead of overwriting — a subtle but essential concurrency fix.
 
 ---
 
