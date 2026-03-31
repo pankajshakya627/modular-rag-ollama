@@ -18,10 +18,13 @@ This document provides visual architecture diagrams and component interaction fl
 ┌────────────────────────────────────────────────────────────────────────────────────┐
 │                                  PRESENTATION LAYER                                │
 │  ┌─────────────────────────────────────────────────────────────────────────────┐   │
-│  │                           FastAPI Application                               │   │
+│  │   FastAPI Application (with AppState DI & Rate Limiting)            │   │
 │  │   ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐        │   │
-│  │   │ POST /query │  │POST /docs   │  │ GET /health │  │ WS /ws/query│        │   │
+│  │   │ POST /query │  │POST /index  │  │ GET /health │  │ GET /metrics│        │   │
 │  │   └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘        │   │
+│  │   ┌───────────────┐                                                         │   │
+│  │   │ WS /ws/query  │                                                         │   │
+│  │   └───────────────┘                                                         │   │
 │  └─────────────────────────────────────────────────────────────────────────────┘   │
 └────────────────────────────────────────┬───────────────────────────────────────────┘
                                          │
@@ -89,11 +92,14 @@ This document provides visual architecture diagrams and component interaction fl
 ### Key Interactions
 
 ```
-FastAPI ──▶ RAGGraph ──┬──▶ Retrieval Components ──▶ VectorStoreManager
-                       │
-                       ├──▶ Reranking Components
-                       │
-                       └──▶ Generation Components ──▶ LLMWrapper
+FastAPI ──▶ AppState (DI) ──▶ RAGGraph ──┬──▶ Retrieval Components ──▶ VectorStoreManager
+                                    │
+                                    ├──▶ Reranking Components
+                                    │
+                                    └──▶ Generation Components ──▶ LLMWrapper
+
+> [!NOTE]
+> All core record types (Document, SearchResult, etc.) are validated via **Pydantic v2 BaseModels** as they traverse from layer to layer, preventing corrupted state from propagating.
 ```
 
 ---
@@ -227,11 +233,12 @@ services:
 
 ## ⚡ Performance & Security
 
-| Aspect            | Consideration    | Mitigation    |
-| ----------------- | ---------------- | ------------- |
-| **Embedding**     | O(N) per doc     | Batch, async  |
-| **Vector Search** | Index size       | HNSW tuning   |
-| **Reranking**     | O(K) per query   | ColBERT/GPU   |
-| **LLM**           | Token latency    | Streaming     |
-| **Security**      | Prompt injection | Sanitization  |
-| **Secrets**       | API keys         | .env, not Git |
+| Aspect            | Consideration    | Mitigation (v1.1.0 Ready)                               |
+| ----------------- | ---------------- | ------------------------------------------------------- |
+| **Embedding**     | O(N) per doc     | Batch, async, thread-safe singletons                    |
+| **Vector Search** | Index size       | HNSW tuning, Pydantic metadata storage                  |
+| **Reranking**     | O(K) per query   | ColBERT/GPU, Cross-Encoder batching                     |
+| **LLM**           | Token latency    | Streaming, LangGraph orchestration                      |
+| **Security**      | Prompt injection | Sanitization, Pydantic validation on all input          |
+| **Availability**  | Resource abuse   | **SlowAPI Rate Limiting** (60 RPS per IP)               |
+| **Observability** | Tracking errors  | **Structlog** (JSON) + **Prometheus Metrics**           |
