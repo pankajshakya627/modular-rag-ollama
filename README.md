@@ -2,7 +2,7 @@
 
 A modular, production-ready Retrieval-Augmented Generation (RAG) system built with **LangChain**, **LangGraph**, and **Ollama** for entirely local LLM inference and embeddings. Features a **Streamlit Web UI**, HyDE, RAPTOR, hybrid search, and cross-encoder reranking.
 
-![Modular RAG](https://img.shields.io/badge/version-1.0.0-blue) ![Python 3.10+](https://img.shields.io/badge/python-3.10+-green) ![License MIT](https://img.shields.io/badge/license-MIT-yellow)
+![Modular RAG](https://img.shields.io/badge/version-1.1.0-blue) ![Python 3.10+](https://img.shields.io/badge/python-3.10+-green) ![License MIT](https://img.shields.io/badge/license-MIT-yellow)
 
 ---
 
@@ -267,13 +267,17 @@ Base URL: `http://localhost:8000`
 | Method   | Endpoint     | Description               | Working Logic                                                           |
 | -------- | ------------ | ------------------------- | ----------------------------------------------------------------------- |
 | `GET`    | `/health`    | System health check       | Checks LLM, Embedding, Vector Store connectivity                        |
+| `GET`    | `/metrics`   | Prometheus Metrics        | Export RED metrics (Rate, Errors, Duration) for observability           |
 | `POST`   | `/query`     | RAG query processing      | Runs LangGraph workflow (Analyze → Retrieve → Rerank → Generate)        |
+| `WS`     | `/ws/query`  | Streaming query           | Stream tokens natively from the `astream` LangGraph invocation          |
 | `POST`   | `/index`     | Index documents           | Splits file into chunks, embeds them, stores in ChromaDB with UUID v7   |
 | `GET`    | `/search`    | Vector similarity search  | Performs hybrid search (Sparse+Dense) or direct dense search on vectors |
 | `GET`    | `/documents` | List indexed documents    | Aggregates chunks by `document_id` metadata                             |
 | `GET`    | `/stats`     | System statistics         | Counts total documents and chunks in store                              |
 | `DELETE` | `/documents` | Delete specific documents | Removes all chunks with matching `document_id`                          |
 | `DELETE` | `/index`     | Clear entire index        | Drops and recreates the ChromaDB collection                             |
+
+> **Note:** All application endpoints are secured with IP-based rate limiting (`60 requests / minute`) via `slowapi` to prevent saturating local Ollama instances. Data schemas are fully protected by strict Pydantic v2 BaseModels.
 
 ---
 

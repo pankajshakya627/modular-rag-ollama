@@ -111,9 +111,10 @@ We address all sub-problems through a **multi-strategy retrieval pipeline** orch
 | **Reranking**        | `sentence-transformers`    | Latest      | `CrossEncoderReranker` for bi-level relevance scoring                |
 | **Orchestration**    | LangGraph                  | 0.2.x       | State-machine based DAG workflow with conditional branching          |
 | **Chains**           | LCEL                       | (LangChain) | `create_stuff_documents_chain` + pipe operators for answer synthesis |
-| **Web UI**           | Streamlit                  | 1.54.x      | Interactive document upload, configuration toggles, chat interface   |
-| **API**              | FastAPI                    | 0.100+      | REST endpoint for headless deployments                               |
-| **Config**           | Pydantic Settings          | v2          | Type-safe `.env` + YAML configuration resolution                     |
+| **API**              | FastAPI                    | 0.100+      | Async REST endpoints with DI, background tasks, and WebSocket streaming |
+| **Config & Models**  | Pydantic                   | v2          | Strict runtime validation for configs, GraphState, and API schemas   |
+| **Observability**    | Structlog + Prometheus     | Latest      | JSON logging, request tracing (`@trace_span`), and system metrics     |
+| **Resilience**       | Tenacity + SlowAPI         | Latest      | Automatic API retries for Ollama and 60 RPS rate limiting per IP     |
 
 ---
 
@@ -254,6 +255,33 @@ This architecture implements **multiple retrieval strategies** that compensate f
                     │   with Source Citation   │
                     └──────────────────────────┘
 ```
+
+---
+
+## 🛡️ Production Readiness & Hardening
+
+While multi-strategy retrieval makes the system accurate, several architectural patterns were introduced to make it **production-ready**:
+
+### 1. Pydantic Runtime Validation
+Raw dictionaries and standard `@dataclass` structures allow corrupted state (e.g., negative confidence scores, mismatched chunk IDs). 
+- **Universal BaseModels**: Every data carrier (`DocumentChunk`, `SearchResult`, `AnswerResult`) is a Pydantic v2 `BaseModel`.
+- **Cross-Validation**: Config objects ensure mathematical constraints (e.g., `chunk_overlap < chunk_size`).
+- **GraphState Type Safety**: LangGraph utilizes a Pydantic state schema, catching state-mutation bugs at runtime before they reach the LLM.
+
+### 2. Thread-Safe Singletons & Mutation Prevention
+- **`functools.lru_cache`**: Core components like the LLM and Embedding factories are instantiated via thread-safe caching wrappers instead of global mutable variables.
+- **Dependency Injection**: The FastAPI layer abandoned global state for an injected `AppState` dependency.
+- **Frozen Configurations**: Once the pipeline boots, configuration objects are locked (`frozen=True`) to prevent side-effect mutations during parallel requests.
+
+### 3. Asynchronous I/O and Resiliency
+- **End-to-End Async**: The LangGraph pipeline exposes `.arun()` and `.astream()`, connected directly to FastAPI's async endpoints.
+- **Tenacity Retries**: Transient Ollama connection resets are automatically caught and retried with exponential backoff.
+- **SlowAPI Rate Limiting**: API endpoints restrict users to a maximum 60 requests per minute (by IP) to prevent saturating the local LLM instance.
+
+### 4. Zero-Friction Observability
+- **Semantic JSON Logging**: `structlog` automatically logs request IDs, function execution times, and contextual variables (like `query_id`) in a machine-parseable format.
+- **`@trace_span` Decorator**: Any function (sync or async) wrapped with this outputs structured metrics on latency and failure rates.
+- **Prometheus Metrics**: The `/metrics` endpoint exposes RED (Rate, Errors, Duration) metrics natively for integration into Grafana and other observability platforms.
 
 ---
 

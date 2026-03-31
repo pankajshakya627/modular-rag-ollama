@@ -70,15 +70,13 @@ class EmbeddingWrapper:
 **Purpose:** Centralized configuration management.
 
 ```python
-@dataclass
-class LLMConfig:
+class LLMConfig(BaseModel):
     model: str = "llama3:8b"
     base_url: str = "http://localhost:11434"
-    temperature: float = 0.7
-    max_tokens: int = 2048
+    temperature: float = Field(default=0.7, ge=0.0, le=2.0)
+    max_tokens: int = Field(default=2048, gt=0)
 
-@dataclass
-class EmbeddingConfig:
+class EmbeddingConfig(BaseModel):
     model: str = "nomic-embed-text"
     base_url: str = "http://localhost:11434"
 ```
@@ -97,8 +95,7 @@ class EmbeddingConfig:
 ### Data Structures
 
 ```python
-@dataclass
-class DocumentChunk:
+class DocumentChunk(BaseModel):
     id: str                           # Unique chunk ID
     content: str                      # Text content
     metadata: Dict[str, Any]          # Source info, positions
@@ -107,8 +104,7 @@ class DocumentChunk:
     end_char_idx: int                 # Position in original doc
     chunk_index: int                  # Sequence number
 
-@dataclass
-class Document:
+class Document(BaseModel):
     id: str
     content: str                      # Full document text
     chunks: List[DocumentChunk]       # Processed chunks
@@ -213,8 +209,7 @@ class LangChainChromaVectorStore(BaseVectorStore):
 **Search Result:**
 
 ```python
-@dataclass
-class SearchResult:
+class SearchResult(BaseModel):
     id: str
     content: str
     score: float           # Similarity score (0-1)
@@ -334,8 +329,7 @@ class RAPTORRetriever:
 ### 1. Base Reranker (`src/components/reranking/base.py`)
 
 ```python
-@dataclass
-class RerankedResult:
+class RerankedResult(BaseModel):
     id: str
     content: str
     original_score: float    # From initial retrieval
@@ -420,8 +414,7 @@ class AnswerGenerator:
 **Answer Result:**
 
 ```python
-@dataclass
-class AnswerResult:
+class AnswerResult(BaseModel):
     answer: str
     sources: List[Dict[str, Any]]  # Referenced documents
     confidence: float              # Estimated confidence
@@ -463,22 +456,22 @@ class ResponseSynthesizer:
 ### LangGraph State Machine
 
 ```python
-class GraphState(TypedDict):
+class GraphState(BaseModel):
     query: str
-    original_query: str
-    decomposed_queries: List[str]
-    stepback_query: str
-    dense_results: List[SearchResult]
-    sparse_results: List[SearchResult]
-    hyde_results: List[SearchResult]
-    fused_results: List[SearchResult]
-    reranked_results: List[RerankedResult]
-    context: str
-    answer: str
-    sources: List[Dict]
-    confidence: float
-    workflow_stage: str
-    errors: List[str]
+    original_query: Optional[str] = None
+    decomposed_queries: List[str] = Field(default_factory=list)
+    stepback_query: Optional[str] = None
+    dense_results: List[SearchResult] = Field(default_factory=list)
+    sparse_results: List[SearchResult] = Field(default_factory=list)
+    hyde_results: List[SearchResult] = Field(default_factory=list)
+    fused_results: List[SearchResult] = Field(default_factory=list)
+    reranked_results: List[RerankedResult] = Field(default_factory=list)
+    context: str = ""
+    answer: str = ""
+    sources: List[Dict] = Field(default_factory=list)
+    confidence: float = 0.0
+    workflow_stage: str = "init"
+    errors: Annotated[List[str], operator.add] = Field(default_factory=list)
 
 class WorkflowStage(Enum):
     QUERY_ANALYSIS = "query_analysis"
@@ -527,22 +520,27 @@ self.hyde_chain = self.hyde_prompt | self.llm_wrapper.llm | StrOutputParser()
 
 | Method | Path              | Purpose             |
 | ------ | ----------------- | ------------------- |
-| POST   | `/query`          | Process a RAG query |
-| POST   | `/documents`      | Add documents       |
+| POST   | `/query`          | Async Process RAG   |
+| POST   | `/index`          | Async Add Docs      |
 | GET    | `/documents`      | List documents      |
 | DELETE | `/documents/{id}` | Delete document     |
+| GET    | `/metrics`        | Prometheus stats    |
 | GET    | `/health`         | Health check        |
 | WS     | `/ws/query`       | Streaming query     |
+
+### Rate Limiting & Obsevability (New in v1.1)
+- **`slowapi` Limit**: `60/minute` on all endpoints.
+- **Observability**: `@trace_span` attached to endpoints tracking `request_duration_seconds` and latency context. 
 
 ### Query Request
 
 ```python
 class QueryRequest(BaseModel):
-    query: str
-    top_k: int = 10
+    query: str = Field(..., min_length=1)
+    top_k: int = Field(default=10, ge=1, le=100)
     use_hyde: bool = True
     use_reranking: bool = True
-    retrieval_method: str = "hybrid"  # dense, sparse, hybrid
+    retrieval_method: Literal["dense", "sparse", "hybrid"] = "hybrid"
 ```
 
 ### Query Response
