@@ -292,7 +292,7 @@ class TestAPIIntegration:
         import httpx
         from src.api.main import app
 
-        async with httpx.AsyncClient(app=app, base_url="http://test") as client:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get("/health")
         assert response.status_code == 200
         data = response.json()
@@ -304,7 +304,7 @@ class TestAPIIntegration:
         import httpx
         from src.api.main import app
 
-        async with httpx.AsyncClient(app=app, base_url="http://test") as client:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post("/query", json={"query": ""})
         assert response.status_code == 422
 
@@ -313,7 +313,7 @@ class TestAPIIntegration:
         import httpx
         from src.api.main import app
 
-        async with httpx.AsyncClient(app=app, base_url="http://test") as client:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
             response = await client.get("/metrics")
         assert response.status_code == 200
 
