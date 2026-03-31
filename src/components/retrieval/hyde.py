@@ -1,16 +1,15 @@
-"""HyDE (Hypothetical Document Embedder) using LangChain built-in.
+"""HyDE (Hypothetical Document Embedder) using LangChain LCEL.
 
-Replaces custom HyDERetriever with langchain.chains.HypotheticalDocumentEmbedder
-which provides the full HyDE pipeline:
+Provides a production-grade HyDE pipeline:
 1. Generate hypothetical document from query using LLM
 2. Embed the hypothetical document
-3. Retrieve similar real documents
+3. Retrieve similar real documents via vector similarity
 """
 import logging
 from typing import List, Optional
 
-from langchain_classic.chains import HypotheticalDocumentEmbedder
 from langchain_core.prompts import PromptTemplate
+from langchain_core.output_parsers import StrOutputParser
 from langchain_core.documents import Document as LangChainDocument
 from langchain_core.language_models import BaseChatModel
 from langchain_core.embeddings import Embeddings
@@ -33,41 +32,61 @@ def create_hyde_embedder(
     llm: BaseChatModel,
     base_embeddings: Embeddings,
     prompt: Optional[PromptTemplate] = None,
-) -> HypotheticalDocumentEmbedder:
-    """Create a LangChain HypotheticalDocumentEmbedder.
-    
-    This replaces the custom HyDERetriever with a LangChain built-in
-    that handles the full HyDE pipeline.
-    
+) -> "HyDEEmbedder":
+    """Create a HyDE embedder using LCEL.
+
+    Generates a hypothetical document from the query via LLM,
+    then embeds it for vector similarity search.
+
     Args:
         llm: LangChain chat model (e.g., ChatOllama)
         base_embeddings: Base embedding model (e.g., OllamaEmbeddings)
         prompt: Optional custom prompt template
-        
+
     Returns:
-        Configured HypotheticalDocumentEmbedder
+        Configured HyDEEmbedder instance
     """
-    hyde_embedder = HypotheticalDocumentEmbedder.from_llm(
+    embedder = HyDEEmbedder(
         llm=llm,
         base_embeddings=base_embeddings,
-        custom_prompt=prompt or HYDE_PROMPT,
+        prompt=prompt,
     )
-    
-    # Override the prompt template if custom one provided
-    if prompt:
-        hyde_embedder.llm_chain.prompt = prompt
-    
-    logger.info("Created HypotheticalDocumentEmbedder (HyDE)")
-    return hyde_embedder
+    logger.info("Created LCEL-based HyDE embedder")
+    return embedder
+
+
+class HyDEEmbedder:
+    """LCEL-based HyDE embedder: query -> LLM hypothesis -> embedding."""
+
+    def __init__(
+        self,
+        llm: BaseChatModel,
+        base_embeddings: Embeddings,
+        prompt: Optional[PromptTemplate] = None,
+    ):
+        self.llm = llm
+        self.base_embeddings = base_embeddings
+        _prompt = prompt or HYDE_PROMPT
+        self._chain = _prompt | llm | StrOutputParser()
+
+    def embed_query(self, query: str) -> List[float]:
+        """Generate hypothetical document and embed it."""
+        hypothesis = self._chain.invoke({"question": query})
+        return self.base_embeddings.embed_query(hypothesis)
+
+    async def aembed_query(self, query: str) -> List[float]:
+        """Async version of embed_query."""
+        hypothesis = await self._chain.ainvoke({"question": query})
+        return await self.base_embeddings.aembed_query(hypothesis)
 
 
 class HyDERetriever:
-    """Backward-compatible wrapper around LangChain HypotheticalDocumentEmbedder.
-    
-    Provides similar interface to the original custom HyDERetriever while
-    delegating to LangChain's built-in HyDE implementation.
+    """Backward-compatible HyDE retriever using LCEL-based HyDEEmbedder.
+
+    Provides the same interface as the original custom HyDERetriever while
+    using a reliable LCEL implementation that avoids deprecated LangChain chains.
     """
-    
+
     def __init__(
         self,
         llm=None,
@@ -79,27 +98,28 @@ class HyDERetriever:
         self.embeddings = embeddings
         self.vector_store = vector_store
         self.num_hypothetical_docs = num_hypothetical_docs
-        self._hyde_embedder = None
-    
+        self._hyde_embedder: Optional[HyDEEmbedder] = None
+
     def _ensure_initialized(self):
         """Lazy initialization of the HyDE embedder."""
         if self._hyde_embedder is None:
             if self.llm is None or self.embeddings is None:
                 raise ValueError("LLM and embeddings must be provided")
-            self._hyde_embedder = create_hyde_embedder(
+            self._hyde_embedder = HyDEEmbedder(
                 llm=self.llm,
                 base_embeddings=self.embeddings,
             )
-    
+
     def embed_query(self, query: str) -> List[float]:
-        """Generate hypothetical document and embed it.
-        
-        This is the core HyDE step: 
-        query → LLM generates hypothetical answer → embed that answer
-        """
+        """Generate hypothetical document and embed it."""
         self._ensure_initialized()
         return self._hyde_embedder.embed_query(query)
-    
+
+    async def aembed_query(self, query: str) -> List[float]:
+        """Async version of embed_query."""
+        self._ensure_initialized()
+        return await self._hyde_embedder.aembed_query(query)
+
     def retrieve(
         self,
         query: str,
@@ -108,15 +128,39 @@ class HyDERetriever:
         """Retrieve documents using HyDE embeddings."""
         if self.vector_store is None:
             raise ValueError("Vector store must be provided for retrieval")
-        
-        # Get HyDE embedding for the query
+
         hyde_embedding = self.embed_query(query)
-        
-        # Search vector store with the HyDE embedding
+
         results = self.vector_store.similarity_search_by_vector(
             embedding=hyde_embedding,
             k=top_k,
         )
-        
+
         logger.info(f"HyDE retriever found {len(results)} documents")
+        return results
+
+    async def aretrieve(
+        self,
+        query: str,
+        top_k: int = 10,
+    ) -> List[LangChainDocument]:
+        """Async version of retrieve."""
+        if self.vector_store is None:
+            raise ValueError("Vector store must be provided for retrieval")
+
+        hyde_embedding = await self.aembed_query(query)
+
+        # Chroma's async search (falls back to sync if not supported)
+        try:
+            results = await self.vector_store.asimilarity_search_by_vector(
+                embedding=hyde_embedding,
+                k=top_k,
+            )
+        except AttributeError:
+            results = self.vector_store.similarity_search_by_vector(
+                embedding=hyde_embedding,
+                k=top_k,
+            )
+
+        logger.info(f"HyDE async retriever found {len(results)} documents")
         return results

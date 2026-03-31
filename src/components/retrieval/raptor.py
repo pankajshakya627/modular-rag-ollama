@@ -1,7 +1,8 @@
 """RAPTOR (Recursive Abstractive Processing) implementation."""
-from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 import logging
+
+from pydantic import BaseModel, Field
 
 # Direct import to avoid circular dependency
 from src.core.uuid_utils import generate_uuid  # UUID v7
@@ -20,14 +21,13 @@ from .vector_store import (
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class ClusterSummary:
+class ClusterSummary(BaseModel):
     """Represents a cluster of documents with its summary."""
     id: str
-    chunk_ids: List[str]
-    summary: str
-    centroid_embedding: List[float]
-    metadata: Dict[str, Any] = None
+    chunk_ids: List[str] = Field(default_factory=list)
+    summary: str = ""
+    centroid_embedding: List[float] = Field(default_factory=list)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 class RAPTORRetriever:
@@ -161,10 +161,9 @@ Document Excerpts:
 Summary (max {self.max_summary_length} tokens):"""
         
         try:
-            summary = self.llm_wrapper.llm.generate(
-                prompt,
-                max_tokens=self.max_summary_length,
-            )
+            from langchain_core.messages import HumanMessage
+            response = self.llm_wrapper.invoke([HumanMessage(content=prompt)])
+            summary = response.content if hasattr(response, "content") else str(response)
             return summary.strip()
         except Exception as e:
             logger.error(f"Error generating cluster summary: {e}")

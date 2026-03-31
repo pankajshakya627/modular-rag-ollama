@@ -5,9 +5,9 @@ Replaces custom AnswerGenerator and ResponseSynthesizer with:
 - LangChain LCEL (prompt | llm | parser) for flexible composition
 """
 import logging
-from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+from pydantic import BaseModel, ConfigDict, Field
 from langchain_core.prompts import ChatPromptTemplate, PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.documents import Document as LangChainDocument
@@ -17,13 +17,14 @@ from langchain_classic.chains.combine_documents import create_stuff_documents_ch
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class AnswerResult:
+class AnswerResult(BaseModel):
     """Represents the result of answer generation."""
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     answer: str
-    sources: List[Dict[str, Any]] = field(default_factory=list)
-    confidence: float = 0.0
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    sources: List[Dict[str, Any]] = Field(default_factory=list)
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 # ============================================================================
@@ -270,16 +271,16 @@ class ResponseSynthesizer:
                 )
                 for i, answer in enumerate(answers)
             ]
-            
+
             merge_chain = create_stuff_documents_chain(
                 llm=self.llm,
                 prompt=SYNTHESIS_MERGE_PROMPT,
             )
-            
+
             return merge_chain.invoke({
                 "input": query,
                 "context": answer_docs,
             })
-        
+
         else:
             return "\n\n".join(answers)

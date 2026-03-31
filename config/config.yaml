@@ -125,6 +125,8 @@ granularity_retrieval:
 langgraph:
   enabled: true
   checkpointing: true
+  checkpointer_backend: "sqlite"   # Options: memory, sqlite, postgres
+  checkpointer_uri: "./data/checkpoints/rag.db"  # Path for sqlite, dsn for postgres
   human_in_loop: false
   workflow_name: "modular_rag_workflow"
 
@@ -135,6 +137,7 @@ api:
   workers: 4
   cors_origins: ["*"]
   docs_enabled: true
+  rate_limit_per_minute: 60  # Requests per IP per minute on /query
 
 # Evaluation Configuration
 evaluation:

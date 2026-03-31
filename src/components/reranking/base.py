@@ -1,41 +1,33 @@
-"""Base reranker class."""
+"""Base reranker class with Pydantic models for production-grade type safety."""
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 import logging
+
+from pydantic import BaseModel, Field
 
 from ..retrieval.vector_store import SearchResult
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class RerankedResult:
-    """Represents a reranked search result."""
+class RerankedResult(BaseModel):
+    """Represents a reranked search result with full Pydantic validation."""
     id: str
     content: str
-    original_score: float
-    reranked_score: float
-    metadata: Dict[str, Any] = None
+    original_score: float = Field(ge=0.0, le=1.0)
+    reranked_score: float = Field(ge=0.0, le=1.0)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
     document_id: Optional[str] = None
-    chunk_index: int = 0
-    
+    chunk_index: int = Field(default=0, ge=0)
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
-        return {
-            "id": self.id,
-            "content": self.content,
-            "original_score": self.original_score,
-            "reranked_score": self.reranked_score,
-            "metadata": self.metadata or {},
-            "document_id": self.document_id,
-            "chunk_index": self.chunk_index,
-        }
+        return self.model_dump()
 
 
 class BaseReranker(ABC):
     """Abstract base class for rerankers."""
-    
+
     @abstractmethod
     def rerank(
         self,
@@ -45,7 +37,7 @@ class BaseReranker(ABC):
     ) -> List[RerankedResult]:
         """Rerank search results."""
         pass
-    
+
     @abstractmethod
     def rerank_batch(
         self,
@@ -59,12 +51,12 @@ class BaseReranker(ABC):
 
 class LLMEnsembleReranker(BaseReranker):
     """Reranker using LLM ensemble for relevance scoring."""
-    
+
     def __init__(self, llm_wrapper, batch_size: int = 5):
         """Initialize the LLM ensemble reranker."""
         self.llm_wrapper = llm_wrapper
         self.batch_size = batch_size
-    
+
     def rerank(
         self,
         query: str,
@@ -74,32 +66,45 @@ class LLMEnsembleReranker(BaseReranker):
         """Rerank results using LLM-based scoring."""
         if not results:
             return []
-        
+
         top_k = top_k or len(results)
-        
-        # Score results in batches
+
         reranked_results = []
         for i in range(0, len(results), self.batch_size):
-            batch = results[i:i + self.batch_size]
-            
+            batch = results[i : i + self.batch_size]
+
             for result in batch:
-                score = self._score_result(query, result.content)
+                # Support both Pydantic SearchResult and plain dict
+                if isinstance(result, dict):
+                    content = result.get("content", "")
+                    r_id = result.get("id", "")
+                    orig_score = result.get("score", 0.0)
+                    metadata = result.get("metadata", {})
+                    document_id = result.get("document_id")
+                    chunk_index = result.get("chunk_index", 0)
+                else:
+                    content = result.content
+                    r_id = result.id
+                    orig_score = result.score
+                    metadata = result.metadata
+                    document_id = result.document_id
+                    chunk_index = result.chunk_index
+
+                score = self._score_result(query, content)
                 reranked = RerankedResult(
-                    id=result.id,
-                    content=result.content,
-                    original_score=result.score,
+                    id=r_id,
+                    content=content,
+                    original_score=min(1.0, max(0.0, orig_score)),
                     reranked_score=score,
-                    metadata=result.metadata,
-                    document_id=result.document_id,
-                    chunk_index=result.chunk_index,
+                    metadata=metadata,
+                    document_id=document_id,
+                    chunk_index=chunk_index,
                 )
                 reranked_results.append(reranked)
-        
-        # Sort by reranked score
+
         reranked_results.sort(key=lambda x: x.reranked_score, reverse=True)
-        
         return reranked_results[:top_k]
-    
+
     def rerank_batch(
         self,
         queries: List[str],
@@ -111,24 +116,26 @@ class LLMEnsembleReranker(BaseReranker):
             self.rerank(query, results, top_k)
             for query, results in zip(queries, results_per_query)
         ]
-    
+
     def _score_result(self, query: str, content: str) -> float:
-        """Score a single result using LLM."""
-        prompt = f"""You are a relevance scorer. Given a query and a document passage, 
-rate how relevant the passage is to answering the query on a scale of 0 to 1.
+        """Score a single result using LLM via invoke() (not generate())."""
+        from langchain_core.messages import HumanMessage
 
-Query: {query}
+        prompt_text = (
+            f"You are a relevance scorer. Given a query and a document passage, "
+            f"rate how relevant the passage is to answering the query on a scale of 0 to 1.\n\n"
+            f"Query: {query}\n\n"
+            f"Document Passage: {content[:500]}\n\n"
+            f"Relevance Score (just a number between 0 and 1):"
+        )
 
-Document Passage: {content[:500]}
-
-Relevance Score (0-1):"""
-        
         try:
-            response = self.llm_wrapper.llm.generate(prompt, max_tokens=10)
-            
-            # Extract score from response
+            # Use invoke() — the correct ChatOllama method
+            response = self.llm_wrapper.invoke([HumanMessage(content=prompt_text)])
+            response_text = response.content if hasattr(response, "content") else str(response)
+
             import re
-            score_match = re.search(r'(\d+\.?\d*)', response)
+            score_match = re.search(r"(\d+\.?\d*)", response_text)
             if score_match:
                 score = float(score_match.group(1))
                 return min(max(score, 0.0), 1.0)
@@ -140,7 +147,7 @@ Relevance Score (0-1):"""
 
 class ThresholdReranker(BaseReranker):
     """Reranker that filters results by a relevance threshold."""
-    
+
     def __init__(
         self,
         base_reranker: BaseReranker,
@@ -151,7 +158,7 @@ class ThresholdReranker(BaseReranker):
         self.base_reranker = base_reranker
         self.threshold = threshold
         self.min_results = min_results
-    
+
     def rerank(
         self,
         query: str,
@@ -160,21 +167,18 @@ class ThresholdReranker(BaseReranker):
     ) -> List[RerankedResult]:
         """Rerank and filter results by threshold."""
         reranked = self.base_reranker.rerank(query, results, top_k)
-        
-        # Filter by threshold
+
         filtered = [r for r in reranked if r.reranked_score >= self.threshold]
-        
-        # Ensure minimum results
+
         if len(filtered) < self.min_results:
-            # Add top results from reranked list
             for r in reranked:
                 if r not in filtered:
                     filtered.append(r)
                     if len(filtered) >= self.min_results:
                         break
-        
+
         return filtered
-    
+
     def rerank_batch(
         self,
         queries: List[str],
@@ -189,8 +193,8 @@ class ThresholdReranker(BaseReranker):
 
 
 class DiversityReranker(BaseReranker):
-    """Reranker that promotes diversity in results."""
-    
+    """Reranker that promotes diversity in results using MMR."""
+
     def __init__(
         self,
         base_reranker: BaseReranker,
@@ -201,61 +205,55 @@ class DiversityReranker(BaseReranker):
         self.base_reranker = base_reranker
         self.embedding_wrapper = embedding_wrapper
         self.diversity_weight = diversity_weight
-    
+
     def rerank(
         self,
         query: str,
         results: List[SearchResult],
         top_k: Optional[int] = None,
     ) -> List[RerankedResult]:
-        """Rerank results considering diversity."""
-        # First get relevance scores
+        """Rerank results considering diversity via MMR."""
         reranked = self.base_reranker.rerank(query, results, top_k)
-        
+
         if len(reranked) <= 1:
             return reranked
-        
-        # Calculate diversity
-        # Get embeddings for all results
+
         contents = [r.content for r in reranked]
         embeddings = self.embedding_wrapper.embed_documents(contents)
-        
-        # Normalize embeddings for cosine similarity
+
         try:
             from ...core.embedding import normalize_embeddings
             embeddings = normalize_embeddings(embeddings)
         except ImportError:
             pass
-        
-        # Select diverse results using MMR (Maximal Marginal Relevance)
-        selected = []
-        selected_embeddings = []
-        
+
+        selected: List[RerankedResult] = []
+        selected_embeddings: List[List[float]] = []
+
+        import numpy as np
+
         for result, embedding in zip(reranked, embeddings):
             if not selected:
                 selected.append(result)
                 selected_embeddings.append(embedding)
                 continue
-            
-            # Calculate MMR score
+
             relevance = result.reranked_score
-            max_similarity = 0.0
-            
-            for sel_emb in selected_embeddings:
-                similarity = self.embedding_wrapper.embedding.compute_similarity(
-                    embedding, sel_emb
-                )
-                max_similarity = max(max_similarity, similarity)
-            
+            emb_arr = np.array(embedding)
+            max_similarity = max(
+                float(np.dot(emb_arr, np.array(se)) /
+                      (np.linalg.norm(emb_arr) * np.linalg.norm(se) + 1e-9))
+                for se in selected_embeddings
+            )
+
             mmr_score = (1 - self.diversity_weight) * relevance - self.diversity_weight * max_similarity
-            
-            # Add to selected if score is high enough
-            if mmr_score > 0 or len(selected) < top_k:
+
+            if mmr_score > 0 or len(selected) < (top_k or len(reranked)):
                 selected.append(result)
                 selected_embeddings.append(embedding)
-        
+
         return selected[:top_k] if top_k else selected
-    
+
     def rerank_batch(
         self,
         queries: List[str],

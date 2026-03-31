@@ -1,9 +1,10 @@
 """Vector store implementation using LangChain for Modular RAG."""
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 import logging
+
+from pydantic import BaseModel, ConfigDict, Field
 
 # Direct import to avoid circular dependency
 from src.core.uuid_utils import generate_uuid  # UUID v7
@@ -20,26 +21,20 @@ from ...core.embedding import get_embedding
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class SearchResult:
-    """Represents a search result."""
+class SearchResult(BaseModel):
+    """Represents a search result with Pydantic validation."""
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     id: str
     content: str
-    score: float
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    score: float = Field(default=0.0, ge=0.0, le=1.0)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
     document_id: Optional[str] = None
-    chunk_index: int = 0
-    
+    chunk_index: int = Field(default=0, ge=0)
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
-        return {
-            "id": self.id,
-            "content": self.content,
-            "score": self.score,
-            "metadata": self.metadata,
-            "document_id": self.document_id,
-            "chunk_index": self.chunk_index,
-        }
+        return self.model_dump()
 
 
 class BaseVectorStore(ABC):
@@ -202,19 +197,17 @@ class LangChainChromaVectorStore(BaseVectorStore):
         return self.vector_store.similarity_search_with_score(query, k=top_k)
     
     def delete_documents(self, document_ids: List[str]) -> None:
-        """Delete documents from the vector store."""
-        # This requires access to the underlying Chroma client
-        # For now, we'll need to use the collection API
+        """Delete documents from the vector store by document_id metadata."""
         try:
+            # Use LangChain's _collection API as the public API doesn't expose
+            # metadata-based deletion; wrap in try/except for safety
             collection = self.vector_store._collection
             for doc_id in document_ids:
-                # Delete by document_id metadata
-                collection.delete(
-                    where={"document_id": doc_id}
-                )
+                collection.delete(where={"document_id": doc_id})
             logger.info(f"Deleted documents: {document_ids}")
         except Exception as e:
-            logger.error(f"Error deleting documents: {e}")
+            logger.error(f"Error deleting documents {document_ids}: {e}")
+            raise
     
     def get_document(self, document_id: str) -> Optional[Document]:
         """Get a document by ID."""
@@ -281,7 +274,8 @@ class LangChainChromaVectorStore(BaseVectorStore):
         """Get the number of documents in the store."""
         try:
             return self.vector_store._collection.count()
-        except:
+        except Exception as e:
+            logger.warning(f"Could not get document count: {e}")
             return 0
     
     def get_all_documents(self) -> List[Document]:

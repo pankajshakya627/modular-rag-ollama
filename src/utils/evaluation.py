@@ -1,9 +1,10 @@
 """Evaluation metrics for Modular RAG."""
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+import re
+from typing import Any, Dict, List, Optional
 import logging
 
 import numpy as np
+from pydantic import BaseModel, Field
 from sklearn.metrics import precision_score, recall_score, f1_score
 from rouge_score import rouge_scorer
 
@@ -13,37 +14,33 @@ from ..components.generation.answer_generator import AnswerResult
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class EvaluationResult:
+class EvaluationResult(BaseModel):
     """Represents evaluation results."""
     metric_name: str
-    score: float
-    details: Dict[str, Any] = field(default_factory=dict)
+    score: float = Field(ge=0.0, le=1.0)
+    details: Dict[str, Any] = Field(default_factory=dict)
 
 
-@dataclass
-class RetrievalEvalResult:
+class RetrievalEvalResult(BaseModel):
     """Represents retrieval evaluation results."""
     query: str
-    retrieved_docs: List[SearchResult]
-    relevant_docs: List[str]  # Document IDs
-    precision: float
-    recall: float
-    f1: float
-    mrr: float  # Mean Reciprocal Rank
-    ndcg: float  # Normalized Discounted Cumulative Gain
+    relevant_docs: List[str] = Field(default_factory=list)
+    precision: float = Field(default=0.0, ge=0.0, le=1.0)
+    recall: float = Field(default=0.0, ge=0.0, le=1.0)
+    f1: float = Field(default=0.0, ge=0.0, le=1.0)
+    mrr: float = Field(default=0.0, ge=0.0, le=1.0)
+    ndcg: float = Field(default=0.0, ge=0.0, le=1.0)
 
 
-@dataclass
-class GenerationEvalResult:
+class GenerationEvalResult(BaseModel):
     """Represents generation evaluation results."""
     query: str
     answer: str
     context: str
-    answer_relevancy: float
-    faithfulness: float
-    context_precision: float
-    rouge_scores: Dict[str, float]
+    answer_relevancy: float = Field(default=0.0, ge=0.0, le=1.0)
+    faithfulness: float = Field(default=0.0, ge=0.0, le=1.0)
+    context_precision: float = Field(default=0.0, ge=0.0, le=1.0)
+    rouge_scores: Dict[str, float] = Field(default_factory=dict)
 
 
 def compute_precision(
@@ -137,24 +134,19 @@ def compute_answer_relevancy(
     answer: str,
     llm_wrapper,
 ) -> float:
-    """Compute answer relevancy using LLM-based scoring."""
-    prompt = f"""Rate how relevant the following answer is to the query on a scale of 0 to 1.
+    """Compute answer relevancy using LLM-based scoring via invoke()."""
+    from langchain_core.messages import HumanMessage
 
-Query: {query}
-
-Answer: {answer}
-
-Relevance Score (0-1):"""
-    
+    prompt = (
+        f"Rate how relevant the following answer is to the query on a scale of 0 to 1.\n\n"
+        f"Query: {query}\n\nAnswer: {answer}\n\nRelevance Score (0-1):"
+    )
     try:
-        response = llm_wrapper.llm.generate(prompt, max_tokens=10)
-        
-        # Extract score
-        import re
-        score_match = re.search(r'(\d+\.?\d*)', response)
+        response = llm_wrapper.invoke([HumanMessage(content=prompt)])
+        text = response.content if hasattr(response, "content") else str(response)
+        score_match = re.search(r"(\d+\.?\d*)", text)
         if score_match:
-            score = float(score_match.group(1))
-            return max(0.0, min(1.0, score))
+            return max(0.0, min(1.0, float(score_match.group(1))))
         return 0.5
     except Exception as e:
         logger.error(f"Error computing answer relevancy: {e}")
@@ -167,24 +159,20 @@ def compute_faithfulness(
     context: str,
     llm_wrapper,
 ) -> float:
-    """Compute faithfulness (how well answer is supported by context)."""
-    prompt = f"""Rate how faithful the following answer is to the context on a scale of 0 to 1.
-An answer is faithful if all claims in the answer are supported by the context.
+    """Compute faithfulness via LLM invoke()."""
+    from langchain_core.messages import HumanMessage
 
-Context: {context[:1000]}...
-
-Answer: {answer}
-
-Faithfulness Score (0-1):"""
-    
+    prompt = (
+        f"Rate how faithful the following answer is to the context on a scale of 0 to 1.\n"
+        f"An answer is faithful if all claims are supported by the context.\n\n"
+        f"Context: {context[:1000]}...\n\nAnswer: {answer}\n\nFaithfulness Score (0-1):"
+    )
     try:
-        response = llm_wrapper.llm.generate(prompt, max_tokens=10)
-        
-        import re
-        score_match = re.search(r'(\d+\.?\d*)', response)
+        response = llm_wrapper.invoke([HumanMessage(content=prompt)])
+        text = response.content if hasattr(response, "content") else str(response)
+        score_match = re.search(r"(\d+\.?\d*)", text)
         if score_match:
-            score = float(score_match.group(1))
-            return max(0.0, min(1.0, score))
+            return max(0.0, min(1.0, float(score_match.group(1))))
         return 0.5
     except Exception as e:
         logger.error(f"Error computing faithfulness: {e}")
@@ -197,31 +185,24 @@ def compute_context_precision(
     relevant_doc_ids: List[str],
     llm_wrapper,
 ) -> float:
-    """Compute context precision using LLM-based evaluation."""
-    # Get the top-k retrieved documents
+    """Compute context precision using LLM invoke()."""
+    from langchain_core.messages import HumanMessage
+
     context = "\n\n".join([
         f"[Doc {i+1}] {doc.content[:500]}"
         for i, doc in enumerate(retrieved_docs[:5])
     ])
-    
-    prompt = f"""Evaluate the precision of the retrieved context for the query.
-Rate on a scale of 0 to 1, where 1 means all retrieved documents are relevant.
-
-Query: {query}
-
-Retrieved Context:
-{context}
-
-Precision Score (0-1):"""
-    
+    prompt = (
+        f"Evaluate the precision of the retrieved context for the query.\n"
+        f"Rate on a scale of 0 to 1 (1 = all retrieved docs relevant).\n\n"
+        f"Query: {query}\n\nRetrieved Context:\n{context}\n\nPrecision Score (0-1):"
+    )
     try:
-        response = llm_wrapper.llm.generate(prompt, max_tokens=10)
-        
-        import re
-        score_match = re.search(r'(\d+\.?\d*)', response)
+        response = llm_wrapper.invoke([HumanMessage(content=prompt)])
+        text = response.content if hasattr(response, "content") else str(response)
+        score_match = re.search(r"(\d+\.?\d*)", text)
         if score_match:
-            score = float(score_match.group(1))
-            return max(0.0, min(1.0, score))
+            return max(0.0, min(1.0, float(score_match.group(1))))
         return 0.5
     except Exception as e:
         logger.error(f"Error computing context precision: {e}")

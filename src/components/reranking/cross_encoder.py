@@ -207,7 +207,14 @@ class CrossEncoderReranker(BaseReranker):
                 },
             ))
         
-        # Sort by final reranked score 
-        reranked_results.sort(key=lambda r: r.reranked_score, reverse=True)
-        
-        return reranked_results[:top_k]
+    def rerank_batch(
+        self,
+        queries: List[str],
+        results_per_query: List[List[Any]],
+        top_k: Optional[int] = None,
+    ) -> List[List[RerankedResult]]:
+        """Rerank multiple result sets."""
+        return [
+            self.rerank(query, results, top_k)
+            for query, results in zip(queries, results_per_query)
+        ]
